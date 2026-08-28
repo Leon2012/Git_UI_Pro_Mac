@@ -189,6 +189,33 @@ export interface UiPreferences {
   shortcuts: Record<string, string>;
 }
 
+export interface LlmSettingsSummary {
+  baseUrl: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  insecurePrivateHttp: boolean;
+}
+
+export interface LlmSettingsUpdate {
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+}
+
+export interface LlmConnectionTestInput extends LlmSettingsUpdate {}
+
+export interface LlmConnectionTestResult {
+  ok: true;
+  model: string;
+}
+
+export interface LlmCommitMessageResult {
+  message: string;
+  scope: "staged" | "working-tree";
+  truncated: boolean;
+  fileCount: number;
+}
+
 export interface RepositoryCreationResult {
   result: GitOperationResult;
   project?: GitProject;

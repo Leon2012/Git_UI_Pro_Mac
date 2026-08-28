@@ -16,6 +16,7 @@ import { DiffMinimap, type DiffMinimapLine } from "./DiffMinimap";
 import { PathTooltip } from "./PathTooltip";
 import type { ChangedFile, ConflictFileDetails, ConflictResolutionInput, DiffLine, FilePreview } from "../types/domain";
 import { absoluteFilePath } from "../utils/filePath";
+import { isPrimaryModifierPressed, formatShortcut, type DesktopPlatform } from "../../electron/platformConfig";
 
 export interface WorktreeEditorTab {
   id: string;
@@ -33,6 +34,7 @@ export interface WorktreeEditorTab {
 }
 
 interface WorktreeDetailPanelProps {
+  platform: DesktopPlatform;
   tabs: WorktreeEditorTab[];
   activeTabId: string | null;
   repositoryPath?: string;
@@ -67,6 +69,7 @@ const MEDIA_ZOOM_STEP = 1.2;
 const MEDIA_PAN_STEP = 36;
 
 export function WorktreeDetailPanel({
+  platform,
   tabs,
   activeTabId,
   repositoryPath,
@@ -490,7 +493,7 @@ export function WorktreeDetailPanel({
           onScroll={handleDiffPanelScroll}
         >
           {mediaPreview ? (
-            <MediaPreview preview={mediaPreview} filePath={file.path} />
+            <MediaPreview platform={platform} preview={mediaPreview} filePath={file.path} />
           ) : binaryDocumentPreview ? (
             <BinaryDocumentPreview preview={binaryDocumentPreview} filePath={file.path} />
           ) : showTextReader ? (
@@ -840,7 +843,7 @@ function isMediaFilePreview(preview?: FilePreview): preview is MediaFilePreview 
   return preview?.type === "image" || preview?.type === "video";
 }
 
-function MediaPreview({ preview, filePath }: { preview: MediaFilePreview; filePath: string }) {
+function MediaPreview({ platform, preview, filePath }: { platform: DesktopPlatform; preview: MediaFilePreview; filePath: string }) {
   const fileName = filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? filePath;
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
@@ -939,7 +942,7 @@ function MediaPreview({ preview, filePath }: { preview: MediaFilePreview; filePa
       return;
     }
 
-    const withCommand = event.ctrlKey || event.metaKey;
+    const withCommand = isPrimaryModifierPressed(event, platform);
     if (withCommand && isZoomInKey(event.key)) {
       event.preventDefault();
       zoomBy(MEDIA_ZOOM_STEP);
@@ -987,7 +990,7 @@ function MediaPreview({ preview, filePath }: { preview: MediaFilePreview; filePa
     <div className="editor-media-preview">
       <div className="editor-media-toolbar" aria-label="媒体预览工具">
         <div className="editor-media-toolgroup">
-          <PathTooltip content="缩小 (Ctrl + -)" className="editor-media-action-tooltip">
+          <PathTooltip content={`缩小 (${formatShortcut("Mod+-", platform)})`} className="editor-media-action-tooltip">
             <button
               type="button"
               className="icon-button compact-icon editor-media-tool"
@@ -1001,7 +1004,7 @@ function MediaPreview({ preview, filePath }: { preview: MediaFilePreview; filePa
           <span className="editor-media-scale" aria-label={`当前缩放 ${zoomLabel}`}>
             {zoomLabel}
           </span>
-          <PathTooltip content="放大 (Ctrl + +)" className="editor-media-action-tooltip">
+          <PathTooltip content={`放大 (${formatShortcut("Mod+=", platform)})`} className="editor-media-action-tooltip">
             <button
               type="button"
               className="icon-button compact-icon editor-media-tool"
@@ -1012,7 +1015,7 @@ function MediaPreview({ preview, filePath }: { preview: MediaFilePreview; filePa
               <ZoomIn size={15} />
             </button>
           </PathTooltip>
-          <PathTooltip content="适应窗口 (Ctrl + 0)" className="editor-media-action-tooltip">
+          <PathTooltip content={`适应窗口 (${formatShortcut("Mod+0", platform)})`} className="editor-media-action-tooltip">
             <button type="button" className="icon-button compact-icon editor-media-tool" aria-label="适应窗口" onClick={resetView}>
               <Maximize2 size={15} />
             </button>

@@ -38,16 +38,22 @@
     "test:release": "node --test scripts/test-release-console.mjs",
     "test:update": "npm run build:electron && node --test scripts/test-update-utils.mjs",
     "test:capabilities": "npm run build:electron && node --test scripts/test-repository-capabilities.mjs",
+    "test:macos-interface": "npm run build:electron && node --test scripts/test-macos-interface.mjs",
+    "test:llm": "npm run build:electron && node --test scripts/test-llm-service.mjs",
+    "test:macos": "node --test scripts/test-macos-arm64-packaging.mjs",
+    "verify:macos-artifacts": "node scripts/verify-macos-arm64-artifacts.mjs",
+    "smoke:macos-interface": "node scripts/smoke-macos-interface.mjs",
     "test:ui": "playwright test",
-    "test": "npm run build:electron && node --test scripts/test-config-store.mjs scripts/test-terminal-history.mjs scripts/test-update-utils.mjs scripts/test-repository-capabilities.mjs scripts/test-hosting-service.mjs && node scripts/test-merge-service.mjs && node --test scripts/test-release-console.mjs",
+    "test": "npm run build:electron && node --test scripts/test-config-store.mjs scripts/test-terminal-history.mjs scripts/test-update-utils.mjs scripts/test-repository-capabilities.mjs scripts/test-hosting-service.mjs scripts/test-macos-arm64-packaging.mjs scripts/test-macos-interface.mjs scripts/test-llm-service.mjs && node scripts/test-merge-service.mjs && node --test scripts/test-release-console.mjs",
     "icons": "node scripts/generate-icons.mjs",
     "release:win": "node scripts/release-console.mjs",
     "ensure:electron": "node scripts/ensure-electron-runtime.mjs",
+    "verify:macos": "node scripts/verify-macos-arm64-environment.mjs",
     "dist": "npm run ensure:electron && npm run icons && npm run build && electron-builder",
     "dist:dir": "npm run ensure:electron && npm run icons && npm run build && electron-builder --dir",
     "dist:win": "npm run ensure:electron && npm run icons && npm run build && electron-builder --win",
     "dist:linux": "npm run ensure:electron && npm run icons && npm run build && electron-builder --linux",
-    "dist:mac": "npm run ensure:electron && npm run icons && npm run build && electron-builder --mac",
+    "dist:mac": "npm run verify:macos && npm run ensure:electron && npm run icons && npm run build && electron-builder --mac --arm64",
     "dist:win:signed": "npm run ensure:electron && npm run icons && npm run build && electron-builder --win -c.win.signExecutable=true",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
     "preview": "vite preview --host 127.0.0.1",
@@ -161,17 +167,30 @@
       "unpackDirName": false
     },
     "mac": {
+      "files": [
+        "dist/**/*",
+        "dist-electron/**/*",
+        "build/icon.png",
+        "package.json",
+        "node_modules/@homebridge/node-pty-prebuilt-multiarch/package.json",
+        "node_modules/@homebridge/node-pty-prebuilt-multiarch/lib/**/*",
+        "node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release/**/*",
+        "!node_modules/@homebridge/node-pty-prebuilt-multiarch/prebuilds/**/*"
+      ],
+      "asarUnpack": [
+        "node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release/**/*.node"
+      ],
       "target": [
         {
           "target": "dmg",
           "arch": [
-            "x64"
+            "arm64"
           ]
         },
         {
           "target": "zip",
           "arch": [
-            "x64"
+            "arm64"
           ]
         }
       ],

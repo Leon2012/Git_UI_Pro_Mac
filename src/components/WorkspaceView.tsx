@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight, FileX2, GitMerge, GitPullRequest, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, FileX2, GitMerge, GitPullRequest, Plus, RefreshCw, Sparkles, Trash2, Undo2 } from "lucide-react";
 import { PathTooltip } from "./PathTooltip";
 import type { ChangedFile, CommitInput, GitProject, GitResetMode, WorktreeState } from "../types/domain";
 import { fileIconInfo } from "../utils/fileIcon";
 import { absoluteFilePath } from "../utils/filePath";
+import { formatShortcut, isPrimaryModifierPressed, type DesktopPlatform } from "../../electron/platformConfig";
 
 interface WorkspaceViewProps {
   project?: GitProject;
+  platform: DesktopPlatform;
   worktree: WorktreeState;
   onStageFile: (file: ChangedFile) => void;
   onStageAll: () => void;
@@ -22,6 +24,7 @@ interface WorkspaceViewProps {
   selectedFilePath?: string;
   selectedFileStaged?: boolean;
   onCommit: (input: CommitInput) => Promise<boolean>;
+  onGenerateCommitMessage: (currentDraft: string) => Promise<string | null>;
   onAmendLastMessage: () => void;
   onUndoLastCommit: (mode: Exclude<GitResetMode, "hard">) => void;
   onSyncChanges: () => Promise<void>;
@@ -45,6 +48,7 @@ const COMMIT_ACTION_REVEAL_GAP = 8;
 
 export function WorkspaceView({
   project,
+  platform,
   worktree,
   onStageFile,
   onStageAll,
@@ -59,6 +63,7 @@ export function WorkspaceView({
   selectedFilePath,
   selectedFileStaged,
   onCommit,
+  onGenerateCommitMessage,
   onAmendLastMessage,
   onUndoLastCommit,
   onSyncChanges,
@@ -72,6 +77,7 @@ export function WorkspaceView({
   const panelBodyId = useId();
   const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
   const [commitBusy, setCommitBusy] = useState(false);
+  const [llmBusy, setLlmBusy] = useState(false);
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
   const [commitMenuPosition, setCommitMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const [changesOpen, setChangesOpen] = useState(true);
@@ -299,6 +305,22 @@ export function WorkspaceView({
     }
   }
 
+  async function generateCommitMessage() {
+    if (llmBusy || !project || changeCount === 0 || hasConflicts) return;
+    setLlmBusy(true);
+    try {
+      const generated = await onGenerateCommitMessage(message);
+      if (!generated) return;
+      updateMessageDraft(generated);
+      window.requestAnimationFrame(() => {
+        messageInputRef.current?.focus();
+        messageInputRef.current?.setSelectionRange(generated.length, generated.length);
+      });
+    } finally {
+      setLlmBusy(false);
+    }
+  }
+
   return (
     <section className={`scm-view ${panelOpen ? "" : "panel-collapsed"}`}>
       <button type="button" className="scm-panel-toggle" aria-expanded={panelOpen} aria-controls={panelBodyId} onClick={onTogglePanel}>
@@ -316,18 +338,31 @@ export function WorkspaceView({
               void submitCommit();
             }}
           >
-            <textarea
-              ref={messageInputRef}
-              value={message}
-              onChange={(event) => updateMessageDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.ctrlKey && event.key === "Enter") {
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              placeholder={`消息(Ctrl+Enter) 在"${project?.status?.currentBranch ?? "当前分支"}"提交`}
-              rows={1}
-            />
+            <div className="scm-message-field">
+              <textarea
+                ref={messageInputRef}
+                value={message}
+                onChange={(event) => updateMessageDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (isPrimaryModifierPressed(event, platform) && event.key === "Enter") {
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder={`消息(${formatShortcut("Mod+Enter", platform)}) 在"${project?.status?.currentBranch ?? "当前分支"}"提交`}
+                rows={1}
+              />
+              <PathTooltip content="使用 LLM 生成提交消息" className="scm-llm-button-tooltip">
+                <button
+                  type="button"
+                  className="scm-llm-button"
+                  aria-label="使用 LLM 生成提交消息"
+                  disabled={!project || changeCount === 0 || hasConflicts || llmBusy}
+                  onClick={() => void generateCommitMessage()}
+                >
+                  {llmBusy ? <RefreshCw size={14} className="spin" /> : <Sparkles size={14} />}
+                </button>
+              </PathTooltip>
+            </div>
             <div className="scm-commit-control" ref={commitActionsRef}>
               <div className={`scm-commit-actions ${canSyncOutgoing || canMergeRemote ? "sync-mode" : ""}`}>
                 <PathTooltip content={commitTitle} className="scm-commit-button-tooltip">
@@ -418,6 +453,7 @@ export function WorkspaceView({
               {worktree.stagedFiles.map((file) => (
                 <ScmFileRow
                   file={file}
+                  platform={platform}
                   selected={file.path === selectedFilePath && selectedFileStaged === true}
                   key={`staged-${file.path}-${file.status}`}
                   primaryActionTitle="取消暂存"
@@ -449,6 +485,7 @@ export function WorkspaceView({
               {conflictFiles.map((file) => (
                 <ScmFileRow
                   file={file}
+                  platform={platform}
                   selected={file.path === selectedFilePath && selectedFileStaged === false}
                   key={`conflict-${file.path}`}
                   primaryActionTitle="打开冲突解决器"
@@ -488,6 +525,7 @@ export function WorkspaceView({
               {regularUnstagedFiles.map((file) => (
                 <ScmFileRow
                   file={file}
+                  platform={platform}
                   selected={file.path === selectedFilePath && selectedFileStaged === false}
                   key={`unstaged-${file.path}-${file.status}`}
                   primaryActionTitle="暂存更改"
@@ -572,6 +610,7 @@ function ScmSection({
 
 function ScmFileRow({
   file,
+  platform,
   selected,
   primaryActionTitle,
   primaryActionIcon,
@@ -583,6 +622,7 @@ function ScmFileRow({
   repositoryPath
 }: {
   file: ChangedFile;
+  platform: DesktopPlatform;
   selected: boolean;
   primaryActionTitle: string;
   primaryActionIcon: React.ReactNode;
@@ -627,7 +667,7 @@ function ScmFileRow({
         pinImmediately();
       }}
       onKeyDown={(event) => {
-        if (event.ctrlKey && event.key === "Enter") {
+        if (isPrimaryModifierPressed(event, platform) && event.key === "Enter") {
           pinImmediately();
           return;
         }

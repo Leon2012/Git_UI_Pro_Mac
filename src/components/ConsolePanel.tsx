@@ -22,6 +22,11 @@ import { apiClient } from "../api/client";
 import { PathTooltip } from "./PathTooltip";
 import type { GitProject, TerminalHistoryEntry, TerminalSessionInfo } from "../types/domain";
 import {
+  formatShortcut,
+  isPrimaryModifierPressed,
+  type DesktopPlatform
+} from "../../electron/platformConfig";
+import {
   canReplayTerminalHistory,
   captureTerminalInput,
   createTerminalCaptureState,
@@ -33,12 +38,12 @@ type ThemeName = "light" | "dark";
 type TerminalStatus = "starting" | "running" | "exited" | "error";
 
 const TERMINAL_RESIZE_DEBOUNCE_MS = 140;
-const TERMINAL_FONT_FAMILY = '"Cascadia Code", Consolas, "Courier New", monospace';
 const TERMINAL_FONT_SIZE = 12;
 
 interface ConsolePanelProps {
   project?: GitProject;
   disabledProjectIds: string[];
+  platform: DesktopPlatform;
   theme: ThemeName;
   visible: boolean;
   maximized: boolean;
@@ -80,7 +85,7 @@ interface TerminalRuntime {
   captureState: TerminalCaptureState;
 }
 
-export function ConsolePanel({ project, disabledProjectIds, theme, visible, maximized, onToggleMaximized, onHide, onConfirmCloseTabs, onConfirmClearHistory }: ConsolePanelProps) {
+export function ConsolePanel({ project, disabledProjectIds, platform, theme, visible, maximized, onToggleMaximized, onHide, onConfirmCloseTabs, onConfirmClearHistory }: ConsolePanelProps) {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [activeHasSelection, setActiveHasSelection] = useState(false);
@@ -254,7 +259,7 @@ export function ConsolePanel({ project, disabledProjectIds, theme, visible, maxi
     }
 
     fitAndResizeTab(activeTab.id);
-    runtimeByTabRef.current.get(activeTab.id)?.terminal.focus();
+    focusTerminalIfNoModal(runtimeByTabRef.current.get(activeTab.id));
   }, [activeTab?.id, visible]);
 
   useEffect(() => {
@@ -282,7 +287,7 @@ export function ConsolePanel({ project, disabledProjectIds, theme, visible, maxi
     }
 
     const tabId = `terminal-tab-${Date.now()}-${++terminalSeedRef.current}`;
-    const terminal = createTerminal(panelRef.current ?? document.documentElement, themeRef.current);
+    const terminal = createTerminal(panelRef.current ?? document.documentElement, themeRef.current, platform);
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
 
@@ -392,7 +397,7 @@ export function ConsolePanel({ project, disabledProjectIds, theme, visible, maxi
       );
       fitAndResizeTab(tabId, { immediateBackendResize: true });
       if (activeTabIdRef.current === tabId && visible) {
-        runtime.terminal.focus();
+        focusTerminalIfNoModal(runtime);
       }
     } catch (error) {
       const runtime = runtimeByTabRef.current.get(tabId);
@@ -691,14 +696,14 @@ export function ConsolePanel({ project, disabledProjectIds, theme, visible, maxi
 
     const key = event.key.toLowerCase();
     const copyShortcut =
-      (event.metaKey && key === "c") ||
+      (isPrimaryModifierPressed(event, platform) && key === "c") ||
       (event.ctrlKey && event.shiftKey && key === "c") ||
       (event.ctrlKey && !event.shiftKey && event.key === "Insert") ||
       (event.ctrlKey && !event.shiftKey && key === "c" && runtime.terminal.hasSelection());
     const pasteShortcut =
-      (event.metaKey && key === "v") ||
+      (isPrimaryModifierPressed(event, platform) && key === "v") ||
       (event.ctrlKey && event.shiftKey && key === "v") ||
-      (!event.ctrlKey && !event.metaKey && event.shiftKey && event.key === "Insert");
+      (platform !== "macos" && !event.ctrlKey && !event.metaKey && event.shiftKey && event.key === "Insert");
 
     if (copyShortcut) {
       event.preventDefault();
@@ -940,7 +945,7 @@ export function ConsolePanel({ project, disabledProjectIds, theme, visible, maxi
               <History size={14} />
             </button>
           </PathTooltip>
-          <PathTooltip content="复制所选内容 (Ctrl+Shift+C / Ctrl+C)" className="console-icon-tooltip">
+          <PathTooltip content={`复制所选内容 (${formatShortcut("Mod+C", platform)} / Ctrl+Shift+C)`} className="console-icon-tooltip">
             <button
               type="button"
               className="icon-button console-close"
@@ -951,7 +956,7 @@ export function ConsolePanel({ project, disabledProjectIds, theme, visible, maxi
               <Copy size={14} />
             </button>
           </PathTooltip>
-          <PathTooltip content="粘贴 (Ctrl+Shift+V / Shift+Insert)" className="console-icon-tooltip">
+          <PathTooltip content={`粘贴 (${formatShortcut("Mod+V", platform)} / Ctrl+Shift+V)`} className="console-icon-tooltip">
             <button
               type="button"
               className="icon-button console-close"
@@ -1072,12 +1077,21 @@ export function ConsolePanel({ project, disabledProjectIds, theme, visible, maxi
   );
 }
 
-function createTerminal(host: HTMLElement, theme: ThemeName): Terminal {
+function focusTerminalIfNoModal(runtime: TerminalRuntime | undefined): void {
+  if (!runtime || document.querySelector(".repository-center[role='dialog']")) {
+    return;
+  }
+  runtime.terminal.focus();
+}
+
+function createTerminal(host: HTMLElement, theme: ThemeName, platform: DesktopPlatform): Terminal {
   return new Terminal({
     allowProposedApi: false,
     convertEol: true,
     cursorBlink: true,
-    fontFamily: TERMINAL_FONT_FAMILY,
+    fontFamily: platform === "macos"
+      ? 'SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace'
+      : '"Cascadia Code", Consolas, "Courier New", monospace',
     fontSize: TERMINAL_FONT_SIZE,
     lineHeight: 1.25,
     minimumContrastRatio: terminalContrastRatio(theme),

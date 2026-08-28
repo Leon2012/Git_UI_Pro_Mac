@@ -2,15 +2,19 @@
 
 ## 常用命令
 
+- `make help`: 查看统一的开发、测试和 macOS arm64 打包入口。
+- `make install`: 编译、签名并安装 macOS arm64 应用到 `/Applications/Git UI Pro.app`；默认使用钥匙串中的第一个 codesigning identity，也可通过 `MAC_SIGN_IDENTITY` 指定。
+- `make install-deps`: 按 `package-lock.json` 安装项目依赖。
 - `npm run release:win`: 启动本地发布控制台，在浏览器中完成版本更新、Windows 打包、版本提交、tag 和 GitHub/Gitee 双远端推送。
 - `npm run icons`: 生成 `build/icon.ico`、`build/icon.png` 和 Linux PNG 图标集。
 - `npm run dist:dir`: 生成未安装目录包到 `release/win-unpacked`，用于快速验证打包内容。
 - `npm run dist:win`: 生成未签名 Windows NSIS 安装包和 Portable 便携版到 `release/`。
 - `npm run dist:linux`: 生成 Linux AppImage 和 deb 包到 `release/`。
-- `npm run dist:mac`: 生成 macOS dmg 和 zip 包到 `release/`，建议在 macOS 环境执行。
+- `npm run dist:mac`: 仅生成 macOS arm64 dmg 和 zip 包到 `release/`，必须在 arm64 macOS 环境执行。
+- `make macos-arm64`: 在隔离临时目录构建、校验并 smoke-test 正式 macOS arm64 包，保留输出路径供后续安装验证。
 - `npm run dist:win:signed`: 生成签名 Windows 包，需先配置代码签名证书环境变量。
 
-所有正式和验证打包产物统一输出到 `release/`，不要使用 `release-*` 临时输出目录。
+常规正式打包产物输出到 `release/`。需要做架构和内容隔离验证时，按 macOS arm64 小节使用系统临时目录，避免把历史文件混入校验；不要使用 `release-*` 作为临时目录。
 
 ## 本地发布控制台
 
@@ -128,7 +132,26 @@ Gitee 国内镜像由本地发布控制台执行。控制台会先从 GitHub Rel
 
 尚未包含双更新源逻辑的 v0.1.25 及更早客户端仍只会访问 GitHub，无法通过服务端配置让旧程序自动改用 Gitee。需要开启代理完成一次升级，或在 Gitee 附件修复后手动下载并覆盖安装基线版本；从包含双更新源逻辑的版本开始，后续检查会优先直连 Gitee。
 
-macOS runner 在免费 GitHub Actions 中经常长时间排队，因此 macOS 构建拆分到 `.github/workflows/build-macos-installer.yml`，需要时进入 `Actions` -> `Build macOS Installer` -> `Run workflow` 手动触发。macOS artifacts 生成后，可手动上传到对应 GitHub Release。
+### macOS arm64 构建
+
+macOS 构建拆分到 `.github/workflows/build-macos-installer.yml`，使用 `macos-14` arm64 runner，并在构建前校验 Node 运行时架构。需要时进入 `Actions` -> `Build macOS Installer` -> `Run workflow` 手动触发。该工作流只上传 `git-ui-pro-macos-arm64` artifacts；生成后可手动上传到对应 GitHub Release。
+
+`npm run dist:mac` 与 macOS 配置只包含 arm64 的 DMG 和 ZIP，不生成 x64 产物。由于 `build.electronDist` 复用本地 Electron runtime，跨架构构建不受支持；如果在其他机器执行，必须确认本机和目标架构均为 arm64。
+
+正式构建前先执行 `npm run verify:macos`，确认当前机器、Node 和 Electron runtime 均为 arm64。需要把构建结果与历史 `release/` 隔离时，可使用下面的完整命令块：
+
+```bash
+set -euo pipefail
+MACOS_OUTPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/git-ui-pro-macos-arm64.XXXXXX")"
+npm run verify:macos
+npm run dist:mac -- --config.directories.output="$MACOS_OUTPUT_DIR" --publish never
+node scripts/verify-macos-arm64-artifacts.mjs "$MACOS_OUTPUT_DIR"
+node scripts/smoke-macos-interface.mjs "$MACOS_OUTPUT_DIR/mac-arm64/Git UI Pro.app"
+```
+
+如果依赖下载受到网络限制，可在执行上述命令块前设置 `https_proxy`、`http_proxy` 和 `all_proxy`。产物校验脚本会动态读取当前版本，并且只接受一个 arm64 DMG、一个 arm64 ZIP 和一个 `mac-arm64/Git UI Pro.app`；它还会检查 ZIP/DMG 完整性、主程序和 `app.asar.unpacked` 下原生 `.node` 文件的 Mach-O arm64 架构，不会扫描或引用旧的 `release/` 文件。
+
+`smoke-macos-interface.mjs` 只在 macOS 上运行，会启动传入的精确 `.app`，验证原生交通灯、系统菜单、侧栏/控制台命令、主题和偏好页，并把浅色/深色截图写入临时目录。未配置 Developer ID 时，当前构建保持 `identity: null`，因此包未签名、未公证，不能据此宣称可直接通过 Gatekeeper；正式发布仍需在 macOS 发布环境补充签名和公证。
 
 首次运行时，electron-builder 可能会下载对应系统的打包工具链，耗时会比本地构建更长。
 

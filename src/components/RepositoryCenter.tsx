@@ -46,6 +46,7 @@ import {
   Save,
   Settings2,
   ShieldCheck,
+  Sparkles,
   SlidersHorizontal,
   Tags,
   Terminal,
@@ -58,7 +59,7 @@ import {
   Wrench,
   X
 } from "lucide-react";
-import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { GIT_HOSTING_PROVIDER_CAPABILITIES } from "../types/domain";
 import type {
   GitHostingAccountSummary,
@@ -72,7 +73,10 @@ import type {
   GitLfsFileStatus,
   GitLfsLock,
   GitLfsMigrateOptions,
-  GitStashDetails
+  GitStashDetails,
+  LlmConnectionTestInput,
+  LlmSettingsSummary,
+  LlmSettingsUpdate
 } from "../types/domain";
 import "../styles/repository-center.css";
 
@@ -99,7 +103,8 @@ export type RepositoryCenterSection =
   | "projects"
   | "groups"
   | "recent"
-  | "preferences";
+  | "preferences"
+  | "llmSettings";
 
 export type RepositoryResourceStatus = "loading" | "ready" | "error";
 
@@ -329,6 +334,7 @@ export interface RepositoryCenterData {
   groups: RepositoryResource<RepositoryProjectGroup[]>;
   recent: RepositoryResource<RepositoryProjectSummary[]>;
   preferences: RepositoryResource<RepositoryPreferences>;
+  llmSettings: RepositoryResource<LlmSettingsSummary>;
 }
 
 export interface RepositoryRemoteInput {
@@ -433,6 +439,9 @@ export interface RepositoryCenterActions {
   onRemoveRecentProject: (projectId: string) => void | Promise<void>;
   onRunBatchAction: (input: { projectIds: string[]; action: RepositoryBatchAction }) => void | Promise<void>;
   onSavePreferences: (preferences: RepositoryPreferences) => void | Promise<void>;
+  onSaveLlmSettings: (input: LlmSettingsUpdate) => void | Promise<void>;
+  onTestLlmConnection: (input: LlmConnectionTestInput) => RepositoryActionFeedback;
+  onClearLlmApiKey: () => void | Promise<void>;
 }
 
 export interface RepositoryCenterProps {
@@ -441,6 +450,8 @@ export interface RepositoryCenterProps {
   data: RepositoryCenterData;
   actions: RepositoryCenterActions;
   initialTab?: RepositoryCenterTab;
+  cloneInputFocusRequest?: number;
+  llmFocusRequest?: number;
   activeTab?: RepositoryCenterTab;
   onTabChange?: (tab: RepositoryCenterTab) => void;
 }
@@ -496,7 +507,8 @@ const SECTION_LABELS: Record<RepositoryCenterSection, string> = {
   projects: "项目",
   groups: "项目分组",
   recent: "最近项目",
-  preferences: "偏好设置"
+  preferences: "偏好设置",
+  llmSettings: "LLM 设置"
 };
 
 const DestructiveConfirmationContext = createContext(true);
@@ -507,6 +519,8 @@ export function RepositoryCenter({
   data,
   actions,
   initialTab = "recovery",
+  cloneInputFocusRequest = 0,
+  llmFocusRequest = 0,
   activeTab: controlledActiveTab,
   onTabChange
 }: RepositoryCenterProps) {
@@ -543,7 +557,11 @@ export function RepositoryCenter({
       return;
     }
     openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusFrame = window.requestAnimationFrame(() => dialogRef.current?.focus());
+    const focusFrame = window.requestAnimationFrame(() => {
+      if (llmFocusRequest <= 0 && cloneInputFocusRequest <= 0) {
+        dialogRef.current?.focus();
+      }
+    });
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -577,7 +595,7 @@ export function RepositoryCenter({
       document.removeEventListener("keydown", handleKeyDown);
       openerRef.current?.focus();
     };
-  }, [open]);
+  }, [cloneInputFocusRequest, llmFocusRequest, open]);
 
   if (!open) {
     return null;
@@ -695,8 +713,8 @@ export function RepositoryCenter({
             {activeTab === "refs" ? <RefsWorkspace data={data} actions={actions} pendingAction={pendingAction} runAction={runAction} reload={reload} /> : null}
             {activeTab === "remotes" ? <RemotesWorkspace data={data} actions={actions} pendingAction={pendingAction} runAction={runAction} reload={reload} /> : null}
             {activeTab === "tools" ? <ToolsWorkspace data={data} actions={actions} pendingAction={pendingAction} runAction={runAction} reload={reload} /> : null}
-            {activeTab === "projects" ? <ProjectsWorkspace data={data} actions={actions} pendingAction={pendingAction} runAction={runAction} reload={reload} /> : null}
-            {activeTab === "preferences" ? <PreferencesWorkspace data={data} actions={actions} pendingAction={pendingAction} runAction={runAction} reload={reload} /> : null}
+            {activeTab === "projects" ? <ProjectsWorkspace data={data} actions={actions} pendingAction={pendingAction} runAction={runAction} reload={reload} cloneInputFocusRequest={cloneInputFocusRequest} /> : null}
+            {activeTab === "preferences" ? <PreferencesWorkspace data={data} actions={actions} pendingAction={pendingAction} runAction={runAction} reload={reload} llmFocusRequest={llmFocusRequest} /> : null}
           </main>
         </div>
       </section>
@@ -713,6 +731,8 @@ interface WorkspaceProps {
   pendingAction: string | null;
   runAction: RunAction;
   reload: (section: RepositoryCenterSection) => void;
+  cloneInputFocusRequest?: number;
+  llmFocusRequest?: number;
 }
 
 function ResourceBoundary<T>({ section, resource, reload, children }: {
@@ -751,15 +771,16 @@ function SectionHeader({ icon, title, description, actions, level = 2 }: { icon:
   );
 }
 
-function DisclosureSection({ icon, title, description, children, defaultOpen = false }: {
+function DisclosureSection({ icon, title, description, children, defaultOpen = false, detailsRef }: {
   icon: ReactNode;
   title: string;
   description: string;
   children: ReactNode;
   defaultOpen?: boolean;
+  detailsRef?: RefObject<HTMLDetailsElement>;
 }) {
   return (
-    <details className="repository-center-disclosure" open={defaultOpen || undefined}>
+    <details ref={detailsRef} className="repository-center-disclosure" open={defaultOpen || undefined}>
       <summary>
         <span className="repository-center-section-icon">{icon}</span>
         <span className="repository-center-disclosure-copy"><strong role="heading" aria-level={2}>{title}</strong><small>{description}</small></span>
@@ -1831,24 +1852,40 @@ function SubmoduleRow({ module, actions, pendingAction, runAction }: {
   );
 }
 
-function ProjectsWorkspace({ data, actions, pendingAction, runAction, reload }: WorkspaceProps) {
+function ProjectsWorkspace({ data, actions, pendingAction, runAction, reload, cloneInputFocusRequest = 0 }: WorkspaceProps) {
   const [clone, setClone] = useState<RepositoryCloneInput>({ url: "", destination: "", branch: "", recurseSubmodules: true });
   const [init, setInit] = useState<RepositoryInitInput>({ path: "", initialBranch: "main", createGitignore: true });
   const [groupName, setGroupName] = useState("");
   const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
   const [batchAction, setBatchAction] = useState<RepositoryBatchAction>("refresh");
+  const cloneDisclosureRef = useRef<HTMLDetailsElement>(null);
+  const cloneUrlInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (cloneInputFocusRequest <= 0) {
+      return;
+    }
+    cloneDisclosureRef.current?.setAttribute("open", "");
+    // The dialog focus trap runs on its first animation frame; defer the
+    // requested field focus until the projects workspace has mounted and the
+    // trap has completed its initial focus.
+    const focusTimer = window.setTimeout(() => cloneUrlInputRef.current?.focus(), 80);
+    return () => {
+      window.clearTimeout(focusTimer);
+    };
+  }, [cloneInputFocusRequest]);
 
   function toggleProject(projectId: string) {
     setSelectedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId]);
   }
 
   return <div className="repository-center-workspace">
-    <DisclosureSection icon={<FolderPlus size={17} />} title="创建仓库" description="克隆远程仓库或在本地目录初始化">
+    <DisclosureSection detailsRef={cloneDisclosureRef} defaultOpen={cloneInputFocusRequest > 0} icon={<FolderPlus size={17} />} title="创建仓库" description="克隆远程仓库或在本地目录初始化">
       <div className="repository-center-disclosure-grid">
       <div className="repository-center-section-column">
         <SectionHeader icon={<Download size={17} />} title="克隆仓库" description="从 HTTPS 或 SSH 地址创建本地副本" level={3} />
         <form className="repository-center-form-grid" onSubmit={(event) => { event.preventDefault(); void runAction("project:clone", () => actions.onCloneRepository({ ...clone, url: clone.url.trim(), destination: clone.destination.trim(), branch: clone.branch?.trim() || undefined })); }}>
-          <label className="repository-center-field grow"><span>仓库地址</span><input value={clone.url} onChange={(event) => setClone((value) => ({ ...value, url: event.target.value }))} placeholder="https://github.com/owner/repository.git" /></label>
+          <label className="repository-center-field grow"><span>仓库地址</span><input ref={cloneUrlInputRef} className="repository-center-clone-source" value={clone.url} onChange={(event) => setClone((value) => ({ ...value, url: event.target.value }))} placeholder="https://github.com/owner/repository.git" /></label>
           <label className="repository-center-field grow"><span>本地目录</span><input value={clone.destination} onChange={(event) => setClone((value) => ({ ...value, destination: event.target.value }))} /></label>
           <label className="repository-center-field"><span>分支（可选）</span><input value={clone.branch} onChange={(event) => setClone((value) => ({ ...value, branch: event.target.value }))} /></label>
           <label className="repository-center-field"><span>浅克隆深度</span><input type="number" min={1} value={clone.depth ?? ""} onChange={(event) => setClone((value) => ({ ...value, depth: event.target.value ? Number(event.target.value) : undefined }))} /></label>
@@ -1910,11 +1947,36 @@ function GroupRow({ group, actions, pendingAction, runAction }: { group: Reposit
   return <div className="repository-center-record repository-center-group-record"><span className="repository-center-record-leading"><Box size={16} /></span><span className="repository-center-record-main"><strong>{group.name}</strong><small>{group.projectIds.length} 个项目</small></span><div className="repository-center-row-editor"><label><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label><ActionButton label="重命名" actionKey={`group:rename:${group.id}`} pendingAction={pendingAction} disabled={!name.trim() || name.trim() === group.name} onClick={() => void runAction(`group:rename:${group.id}`, () => actions.onRenameGroup({ groupId: group.id, name: name.trim() }))} icon={<Pencil size={14} />} /><ActionButton label="删除" actionKey={`group:delete:${group.id}`} pendingAction={pendingAction} onClick={() => void runAction(`group:delete:${group.id}`, () => actions.onDeleteGroup(group.id))} icon={<Trash2 size={14} />} tone="danger" requiresConfirmation confirmLabel="确认删除分组" /></div></div>;
 }
 
-function PreferencesWorkspace({ data, actions, pendingAction, runAction, reload }: WorkspaceProps) {
+function PreferencesWorkspace({ data, actions, pendingAction, runAction, reload, llmFocusRequest = 0 }: WorkspaceProps) {
   const [preferences, setPreferences] = useState(data.preferences.data);
+  const llmBaseUrlRef = useRef<HTMLInputElement>(null);
+  const [llmDraft, setLlmDraft] = useState<LlmSettingsUpdate>(() => ({
+    baseUrl: data.llmSettings.data.baseUrl,
+    model: data.llmSettings.data.model,
+    apiKey: ""
+  }));
   useEffect(() => setPreferences(data.preferences.data), [data.preferences.data]);
+  useEffect(() => setLlmDraft({
+    baseUrl: data.llmSettings.data.baseUrl,
+    model: data.llmSettings.data.model,
+    apiKey: ""
+  }), [data.llmSettings.data]);
+  useEffect(() => {
+    if (llmFocusRequest <= 0 || data.llmSettings.status !== "ready") return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("llm-preferences-section")?.scrollIntoView({ block: "start" });
+      llmBaseUrlRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [data.llmSettings.status, llmFocusRequest]);
   const hasChanges = JSON.stringify(preferences) !== JSON.stringify(data.preferences.data);
   const saving = pendingAction === "preferences:save";
+  const llmHasChanges = llmDraft.baseUrl.trim() !== data.llmSettings.data.baseUrl
+    || llmDraft.model.trim() !== data.llmSettings.data.model
+    || Boolean(llmDraft.apiKey?.trim());
+  const llmReadyToConnect = Boolean(llmDraft.baseUrl.trim() && llmDraft.model.trim()
+    && (llmDraft.apiKey?.trim() || data.llmSettings.data.apiKeyConfigured));
+  const insecurePrivateHttp = llmDraft.baseUrl.trim().toLowerCase().startsWith("http://");
 
   function updateShortcut(id: string, keys: string) {
     setPreferences((current) => ({ ...current, shortcuts: current.shortcuts.map((shortcut) => shortcut.id === id ? { ...shortcut, keys } : shortcut) }));
@@ -2018,6 +2080,93 @@ function PreferencesWorkspace({ data, actions, pendingAction, runAction, reload 
             <legend>危险操作</legend>
             <label className="repository-center-switch"><input type="checkbox" checked={preferences.confirmDestructiveActions} onChange={(event) => setPreferences((value) => ({ ...value, confirmDestructiveActions: event.target.checked }))} /><span>执行强制重置、删除分支和清理工作树前要求确认</span></label>
           </fieldset>
+        </div>
+      </>}</ResourceBoundary>
+    </section>
+
+    <section className="repository-center-section repository-center-llm-section" id="llm-preferences-section">
+      <SectionHeader icon={<Sparkles size={17} />} title="LLM" description="通过 OpenAI Chat Completions 兼容接口生成英文提交标题" />
+      <ResourceBoundary section="llmSettings" resource={data.llmSettings} reload={reload}>{() => <>
+        <div className="repository-center-llm-status" data-configured={data.llmSettings.data.apiKeyConfigured}>
+          <KeyRound size={15} />
+          <span>
+            <strong>{data.llmSettings.data.apiKeyConfigured ? "API Key 已配置" : "API Key 未配置"}</strong>
+            <small>已保存的 Key 由系统凭据加密保护，不会回填到页面。</small>
+          </span>
+        </div>
+        <div className="repository-center-llm-form">
+          <label className="repository-center-field repository-center-llm-base-url">
+            <span>Base URL</span>
+            <input
+              ref={llmBaseUrlRef}
+              value={llmDraft.baseUrl}
+              onChange={(event) => setLlmDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+              placeholder="https://api.openai.com/v1"
+              autoCapitalize="none"
+              spellCheck={false}
+            />
+          </label>
+          <label className="repository-center-field">
+            <span>Model</span>
+            <input
+              value={llmDraft.model}
+              onChange={(event) => setLlmDraft((current) => ({ ...current, model: event.target.value }))}
+              placeholder="model-name"
+              autoCapitalize="none"
+              spellCheck={false}
+            />
+          </label>
+          <label className="repository-center-field repository-center-llm-api-key">
+            <span>API Key</span>
+            <input
+              type="password"
+              value={llmDraft.apiKey ?? ""}
+              onChange={(event) => setLlmDraft((current) => ({ ...current, apiKey: event.target.value }))}
+              placeholder={data.llmSettings.data.apiKeyConfigured ? "留空以保留已保存的 Key" : "输入 API Key"}
+              autoComplete="new-password"
+              spellCheck={false}
+            />
+          </label>
+        </div>
+        {insecurePrivateHttp ? (
+          <div className="repository-center-llm-warning" role="note">
+            <CircleAlert size={15} />
+            <span>API Key 将通过未加密的内网 HTTP 连接传输，请只在可信网络中使用。</span>
+          </div>
+        ) : null}
+        <div className="repository-center-llm-actions">
+          <ActionButton
+            label="测试连接"
+            actionKey="llm:test"
+            pendingAction={pendingAction}
+            disabled={!llmReadyToConnect}
+            onClick={() => void runAction("llm:test", () => actions.onTestLlmConnection(llmDraft))}
+            icon={<Play size={14} />}
+          />
+          <ActionButton
+            label="保存 LLM 设置"
+            actionKey="llm:save"
+            pendingAction={pendingAction}
+            disabled={!llmHasChanges || !llmDraft.baseUrl.trim() || !llmDraft.model.trim()}
+            onClick={() => void runAction("llm:save", async () => {
+              await actions.onSaveLlmSettings(llmDraft);
+              return "LLM 设置已保存";
+            })}
+            icon={<Save size={14} />}
+            tone="primary"
+          />
+          <ActionButton
+            label="清除 API Key"
+            actionKey="llm:clear-key"
+            pendingAction={pendingAction}
+            disabled={!data.llmSettings.data.apiKeyConfigured}
+            onClick={() => void runAction("llm:clear-key", async () => {
+              await actions.onClearLlmApiKey();
+              return "LLM API Key 已清除";
+            })}
+            icon={<Trash2 size={14} />}
+            tone="danger"
+          />
         </div>
       </>}</ResourceBoundary>
     </section>

@@ -28,6 +28,11 @@ import type {
   GitLfsLock,
   GitLfsMigrateOptions,
   GitLinkedWorktree,
+  LlmCommitMessageResult,
+  LlmConnectionTestInput,
+  LlmConnectionTestResult,
+  LlmSettingsSummary,
+  LlmSettingsUpdate,
   GitMergePreview,
   GitMergeStrategy,
   GitOperationResult,
@@ -94,6 +99,12 @@ let browserUiPreferences: UiPreferences = {
   sidebarPosition: "left",
   confirmDestructiveActions: true,
   shortcuts: {}
+};
+let browserLlmSettings: LlmSettingsSummary = {
+  baseUrl: "",
+  model: "",
+  apiKeyConfigured: false,
+  insecurePrivateHttp: false
 };
 const browserTerminalHistories: Record<string, TerminalHistoryEntry[]> = {};
 
@@ -710,6 +721,14 @@ export const apiClient = {
     return okResult(`git switch ${targetBranch} && git merge --${strategy} --no-edit ${currentBranch}`);
   },
 
+  async mergeIntoCurrentBranch(project: GitProject, sourceBranch: string, strategy: GitMergeStrategy): Promise<GitOperationResult> {
+    if (window.gitUI) {
+      return window.gitUI.mergeIntoCurrentBranch(repositoryTarget(project), sourceBranch, strategy);
+    }
+    await wait(mockDelay);
+    return okResult(`git merge --${strategy} --no-edit ${sourceBranch}`);
+  },
+
   async continueMerge(project: GitProject): Promise<GitOperationResult> {
     if (window.gitUI) {
       return window.gitUI.continueMerge(repositoryTarget(project));
@@ -908,14 +927,14 @@ export const apiClient = {
   },
 
   async getUiPreferences(): Promise<UiPreferences> {
-    if (window.gitUI) {
+    if (window.gitUI?.getUiPreferences) {
       return window.gitUI.getUiPreferences();
     }
     return { ...browserUiPreferences, shortcuts: { ...browserUiPreferences.shortcuts } };
   },
 
   async updateUiPreferences(input: Partial<UiPreferences>): Promise<UiPreferences> {
-    if (window.gitUI) {
+    if (window.gitUI?.updateUiPreferences) {
       return window.gitUI.updateUiPreferences(input);
     }
     const rightPanelWidth = input.rightPanelWidth === undefined
@@ -928,6 +947,63 @@ export const apiClient = {
       shortcuts: input.shortcuts ? { ...browserUiPreferences.shortcuts, ...input.shortcuts } : browserUiPreferences.shortcuts
     };
     return { ...browserUiPreferences, shortcuts: { ...browserUiPreferences.shortcuts } };
+  },
+
+  async getLlmSettings(): Promise<LlmSettingsSummary> {
+    if (window.gitUI) {
+      return window.gitUI.getLlmSettings();
+    }
+    return { ...browserLlmSettings };
+  },
+
+  async saveLlmSettings(input: LlmSettingsUpdate): Promise<LlmSettingsSummary> {
+    if (window.gitUI) {
+      return window.gitUI.saveLlmSettings(input);
+    }
+    const baseUrl = input.baseUrl.trim().replace(/\/+$/, "");
+    browserLlmSettings = {
+      baseUrl,
+      model: input.model.trim(),
+      apiKeyConfigured: Boolean(input.apiKey?.trim()) || browserLlmSettings.apiKeyConfigured,
+      insecurePrivateHttp: baseUrl.startsWith("http://")
+    };
+    return { ...browserLlmSettings };
+  },
+
+  async clearLlmApiKey(): Promise<boolean> {
+    if (window.gitUI) {
+      return window.gitUI.clearLlmApiKey();
+    }
+    const configured = browserLlmSettings.apiKeyConfigured;
+    browserLlmSettings = { ...browserLlmSettings, apiKeyConfigured: false };
+    return configured;
+  },
+
+  async testLlmConnection(input: LlmConnectionTestInput): Promise<LlmConnectionTestResult> {
+    if (window.gitUI) {
+      return window.gitUI.testLlmConnection(input);
+    }
+    await wait(mockDelay);
+    if (!input.baseUrl.trim() || !input.model.trim() || (!input.apiKey?.trim() && !browserLlmSettings.apiKeyConfigured)) {
+      throw new Error("请完整配置 Base URL、API Key 和 Model。");
+    }
+    return { ok: true, model: input.model.trim() };
+  },
+
+  async generateCommitMessage(project: GitProject): Promise<LlmCommitMessageResult> {
+    if (window.gitUI) {
+      return window.gitUI.generateCommitMessage(repositoryTarget(project));
+    }
+    await wait(mockDelay);
+    if (!browserLlmSettings.baseUrl || !browserLlmSettings.model || !browserLlmSettings.apiKeyConfigured) {
+      throw new Error("请先配置 LLM Base URL、API Key 和 Model。");
+    }
+    return {
+      message: "feat(ui): update repository changes",
+      scope: project.status?.stagedCount ? "staged" : "working-tree",
+      truncated: false,
+      fileCount: (project.status?.stagedCount || project.status?.unstagedCount || 1)
+    };
   },
 
   async initializeRepository(directoryPath: string, initialBranch: string, createGitignore: boolean): Promise<RepositoryCreationResult> {
@@ -971,7 +1047,18 @@ export const apiClient = {
   },
 
   async getRemotes(project: GitProject): Promise<GitRemoteInfo[]> {
-    return desktopBridge().getRemotes(repositoryTarget(project));
+    if (window.gitUI) {
+      return window.gitUI.getRemotes(repositoryTarget(project));
+    }
+    return [{
+      name: "origin",
+      fetchUrls: ["https://example.com/example/repository.git"],
+      pushUrls: ["https://example.com/example/repository.git"],
+      explicitPushUrls: [],
+      defaultBranch: "master",
+      defaultFetch: true,
+      defaultPush: true
+    }];
   },
 
   async addRemote(project: GitProject, name: string, fetchUrl: string, pushUrl?: string): Promise<GitOperationResult> {

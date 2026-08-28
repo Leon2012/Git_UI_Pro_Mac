@@ -1,7 +1,8 @@
 :root {
-  --app-font:
+  --system-font:
     "Segoe UI Variable Text", "Segoe UI Variable", "HarmonyOS Sans SC", "MiSans", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
     "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --app-font: var(--system-font);
   --mono-font: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
   font-family:
     var(--app-font);
@@ -646,7 +647,7 @@ button {
 
 .graph-commit-meta {
   color: var(--muted);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 11px;
 }
 
@@ -1405,7 +1406,7 @@ button {
 .commit-hash {
   flex: 0 0 auto;
   color: var(--blue);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 12px;
 }
 
@@ -1523,7 +1524,7 @@ button {
 .meta-value {
   overflow-wrap: anywhere;
   color: var(--text);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 12px;
 }
 
@@ -1615,7 +1616,7 @@ button {
   align-items: center;
   margin-bottom: 8px;
   color: var(--muted);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -1631,7 +1632,7 @@ button {
   display: grid;
   grid-template-columns: 42px 42px minmax(0, 1fr);
   min-height: 26px;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 12px;
 }
 
@@ -1944,7 +1945,7 @@ button {
 
 .scm-file-status {
   color: var(--success);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 12px;
   text-align: center;
 }
@@ -2270,7 +2271,7 @@ button {
   overflow: hidden;
   padding: 8px 10px;
   color: var(--text);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 12px;
   line-height: 18px;
 }
@@ -2447,7 +2448,7 @@ button {
 
 .console-history-command {
   overflow: hidden;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 12px;
   line-height: 17px;
   text-overflow: ellipsis;
@@ -3025,7 +3026,7 @@ button {
   border-bottom: 1px solid var(--border);
   padding: 0 14px;
   color: var(--muted);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 12px;
 }
 
@@ -4468,7 +4469,7 @@ button {
   height: 18px;
   place-items: center;
   color: var(--blue);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 11px;
   font-weight: 700;
 }
@@ -4613,7 +4614,7 @@ button {
 
 .commit-hover-footer code {
   color: var(--blue);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 12px;
 }
 
@@ -8196,7 +8197,7 @@ code,
   background: color-mix(in srgb, var(--accent) 72%, transparent);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .app-shell {
     grid-template-columns: clamp(180px, 36vw, var(--sidebar-width)) 4px minmax(0, 1fr);
   }
@@ -9687,4 +9688,463 @@ code,
     justify-content: center;
     padding: 0;
   }
+}
+
+/* Independent branch navigator between the project rail and source control. */
+.app-shell.app-shell {
+  grid-template-columns: var(--sidebar-width) 4px var(--branch-width) 4px minmax(0, 1fr);
+}
+
+.app-shell.app-shell > .project-rail,
+.app-shell.app-shell > .collapsed-sidebar {
+  grid-column: 1;
+}
+
+.app-shell.app-shell > .sidebar-resize {
+  grid-column: 2;
+}
+
+.app-shell.app-shell > .branch-rail {
+  grid-column: 3;
+}
+
+.app-shell.app-shell > .branch-rail-resize {
+  grid-column: 4;
+}
+
+.app-shell.app-shell > .workspace-shell {
+  grid-column: 5;
+}
+
+.app-shell.app-shell.left-collapsed {
+  grid-template-columns: var(--branch-width) 4px minmax(0, 1fr);
+}
+
+.app-shell.app-shell.left-collapsed > .branch-rail {
+  grid-column: 1;
+}
+
+.app-shell.app-shell.left-collapsed > .branch-rail-resize {
+  grid-column: 2;
+}
+
+.app-shell.app-shell.left-collapsed > .workspace-shell {
+  grid-column: 3;
+}
+
+.app-shell.app-shell.sidebar-right {
+  grid-template-columns: minmax(0, 1fr) 4px var(--branch-width) 4px var(--sidebar-width);
+}
+
+.app-shell.app-shell.sidebar-right > .workspace-shell {
+  grid-column: 1;
+}
+
+.app-shell.app-shell.sidebar-right > .branch-rail-resize {
+  grid-column: 2;
+}
+
+.app-shell.app-shell.sidebar-right > .branch-rail {
+  grid-column: 3;
+}
+
+.app-shell.app-shell.sidebar-right > .sidebar-resize {
+  grid-column: 4;
+}
+
+.app-shell.app-shell.sidebar-right > .project-rail,
+.app-shell.app-shell.sidebar-right > .collapsed-sidebar {
+  grid-column: 5;
+}
+
+.app-shell.app-shell.sidebar-right.left-collapsed {
+  grid-template-columns: minmax(0, 1fr) 4px var(--branch-width);
+}
+
+.app-shell.app-shell.sidebar-right.left-collapsed > .workspace-shell {
+  grid-column: 1;
+}
+
+.app-shell.app-shell.sidebar-right.left-collapsed > .branch-rail-resize {
+  grid-column: 2;
+}
+
+.app-shell.app-shell.sidebar-right.left-collapsed > .branch-rail {
+  grid-column: 3;
+}
+
+.branch-rail {
+  display: grid;
+  grid-row: 2;
+  grid-template-rows: 42px 36px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 96%, var(--bg));
+}
+
+.branch-rail.collapsed {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+.branch-rail-header {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 6px 0 10px;
+}
+
+.branch-rail-title,
+.branch-rail-actions,
+.branch-rail-actions .path-tooltip-anchor {
+  display: flex;
+  align-items: center;
+}
+
+.branch-rail-title {
+  gap: 6px;
+  min-width: 0;
+}
+
+.branch-rail-title h2,
+.branch-group-toggle h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.branch-rail-title small,
+.branch-group-toggle small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  padding: 0 4px;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 10px;
+}
+
+.branch-rail-actions {
+  gap: 1px;
+  flex: 0 0 auto;
+}
+
+.branch-rail-actions button,
+.branch-rail-expand,
+.branch-row-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+}
+
+.branch-rail-actions button:hover:not(:disabled),
+.branch-rail-expand:hover,
+.branch-row-menu:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.branch-rail-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 3px;
+  align-items: center;
+  margin: 6px 8px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 6px;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.branch-rail-search input {
+  min-width: 0;
+  height: 26px;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+}
+
+.branch-rail-list {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 3px 5px 10px;
+}
+
+.branch-group + .branch-group {
+  margin-top: 4px;
+}
+
+.branch-group-toggle {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) max-content;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+  height: 28px;
+  border-radius: 5px;
+  padding: 0 5px;
+  color: var(--muted);
+  background: transparent;
+  text-align: left;
+}
+
+.branch-group-toggle:hover {
+  background: var(--surface);
+}
+
+.branch-group-toggle svg {
+  transition: transform 120ms ease;
+}
+
+.branch-group-toggle svg.collapsed {
+  transform: rotate(-90deg);
+}
+
+.branch-group-items {
+  display: grid;
+  gap: 1px;
+}
+
+.branch-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: center;
+  min-width: 0;
+  min-height: 34px;
+  border-radius: 5px;
+}
+
+.branch-row:hover,
+.branch-row.selected {
+  background: var(--surface-2);
+}
+
+.branch-row[data-current="true"] {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+}
+
+.branch-row-main {
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr) max-content max-content;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  height: 34px;
+  padding: 0 2px 0 7px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.branch-row-main > span {
+  display: grid;
+  min-width: 0;
+}
+
+.branch-row-main strong,
+.branch-row-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-row-main strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.branch-row-main small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.branch-row-main em {
+  color: var(--muted);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.branch-context-menu {
+  position: fixed;
+  z-index: 10020;
+  display: grid;
+  width: 210px;
+  padding: 5px;
+}
+
+.branch-context-menu > button {
+  width: 100%;
+  min-height: 30px;
+  border-radius: 5px;
+  padding: 0 9px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.branch-context-menu > button:hover:not(:disabled),
+.branch-context-menu > button:focus-visible {
+  color: #fff;
+  background: var(--blue);
+  outline: 0;
+}
+
+.branch-context-menu > button.danger {
+  color: var(--danger);
+}
+
+.branch-context-menu > button:disabled {
+  opacity: 0.45;
+}
+
+.branch-rail-message {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 12px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.branch-rail-message.error {
+  color: var(--danger);
+}
+
+.branch-rail-message button {
+  min-height: 26px;
+  border-radius: 5px;
+  padding: 0 8px;
+  color: var(--blue);
+  background: var(--surface-2);
+}
+
+.branch-rail-resize {
+  position: relative;
+  grid-row: 2;
+  cursor: col-resize;
+  background: var(--panel);
+}
+
+.branch-rail-resize::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 1px;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 68%, transparent);
+}
+
+.branch-rail-resize:hover::before {
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
+}
+
+@media (max-width: 900px) {
+  .app-shell.app-shell,
+  .app-shell.app-shell.left-collapsed {
+    grid-template-columns: var(--sidebar-width) 4px minmax(0, 1fr);
+  }
+
+  .app-shell.app-shell.left-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell.app-shell > .branch-rail,
+  .app-shell.app-shell > .branch-rail-resize {
+    display: none;
+  }
+
+  .app-shell.app-shell > .workspace-shell,
+  .app-shell.app-shell.left-collapsed > .workspace-shell {
+    grid-column: 3;
+  }
+
+  .app-shell.app-shell.left-collapsed > .workspace-shell {
+    grid-column: 1;
+  }
+
+  .app-shell.app-shell.sidebar-right {
+    grid-template-columns: minmax(0, 1fr) 4px var(--sidebar-width);
+  }
+
+  .app-shell.app-shell.sidebar-right > .workspace-shell {
+    grid-column: 1;
+  }
+
+  .app-shell.app-shell.sidebar-right > .sidebar-resize {
+    grid-column: 2;
+  }
+
+  .app-shell.app-shell.sidebar-right > .project-rail,
+  .app-shell.app-shell.sidebar-right > .collapsed-sidebar {
+    grid-column: 3;
+  }
+}
+
+.source-control-pane .scm-message-field {
+  position: relative;
+  min-width: 0;
+}
+
+.source-control-pane .scm-message-field textarea {
+  width: 100%;
+  padding-right: 38px;
+}
+
+.source-control-pane .scm-llm-button-tooltip {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+}
+
+.source-control-pane .scm-llm-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  padding: 0;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+}
+
+.source-control-pane .scm-llm-button:hover:not(:disabled),
+.source-control-pane .scm-llm-button:focus-visible {
+  color: #fff;
+  background: var(--blue);
+  outline: 0;
+}
+
+.source-control-pane .scm-llm-button:disabled {
+  color: var(--muted);
+  background: transparent;
+  opacity: 0.55;
 }

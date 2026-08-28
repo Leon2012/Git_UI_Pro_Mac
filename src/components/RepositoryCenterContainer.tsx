@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { apiClient } from "../api/client";
+import { readDesktopPlatform } from "../platform/desktop";
+import { formatShortcut, shortcutInputToCanonical, type DesktopPlatform } from "../../electron/platformConfig";
 import type {
   BranchInfo,
   GitHostingAccountSummary,
@@ -11,6 +13,7 @@ import type {
   GitProject,
   GitRemoteInfo,
   GitStatusSummary,
+  LlmSettingsSummary,
   ProjectLibraryState,
   UiPreferences
 } from "../types/domain";
@@ -34,6 +37,8 @@ interface RepositoryCenterContainerProps {
   project?: GitProject;
   projects: GitProject[];
   initialTab?: RepositoryCenterTab;
+  cloneInputFocusRequest?: number;
+  llmFocusRequest?: number;
   onClose: () => void;
   onOpenProject: (projectId: string, openedProject?: GitProject) => void;
   onProjectsChange: (projects: GitProject[]) => void;
@@ -57,7 +62,7 @@ const TAB_SECTIONS: Record<RepositoryCenterTab, readonly RepositoryCenterSection
   remotes: ["remotes", "hosting", "hostingAccounts"],
   tools: ["worktrees", "submodules", "lfs", "gitignore", "signing", "identity"],
   projects: ["projects", "groups", "recent"],
-  preferences: ["preferences"]
+  preferences: ["preferences", "llmSettings"]
 };
 
 const TAB_DEFERRED_SECTIONS: Partial<Record<RepositoryCenterTab, readonly RepositoryCenterSection[]>> = {
@@ -82,6 +87,8 @@ export function RepositoryCenterContainer({
   project,
   projects,
   initialTab,
+  cloneInputFocusRequest = 0,
+  llmFocusRequest = 0,
   onClose,
   onOpenProject,
   onProjectsChange,
@@ -96,6 +103,7 @@ export function RepositoryCenterContainer({
   const loadedSectionsRef = useRef(new Set<RepositoryCenterSection>());
   const projectRef = useRef(project);
   const projectsRef = useRef(projects);
+  const desktopPlatform = readDesktopPlatform();
 
   projectRef.current = project;
   projectsRef.current = projects;
@@ -122,13 +130,20 @@ export function RepositoryCenterContainer({
 
     const libraryPromise = needsLibrary ? asResource(() => apiClient.getProjectLibrary()) : Promise.resolve(readyResource<ProjectLibraryState>({ groups: [], recentProjectIds: [] }));
     const preferencesPromise = shouldLoad("preferences") ? asResource(() => apiClient.getUiPreferences()) : Promise.resolve(readyResource(defaultPreferences()));
+    const llmSettingsPromise = shouldLoad("llmSettings") ? asResource(() => apiClient.getLlmSettings()) : Promise.resolve(readyResource<LlmSettingsSummary>({
+      baseUrl: "",
+      model: "",
+      apiKeyConfigured: false,
+      insecurePrivateHttp: false
+    }));
     const statusPromise = selectedProject && needsStatus ? asResource(() => apiClient.getProjectStatus(selectedProject)) : Promise.resolve(readyResource<GitStatusSummary | undefined>(undefined));
     const branchesPromise = selectedProject && needsBranches ? asResource(() => apiClient.getBranches(selectedProject)) : Promise.resolve(readyResource<BranchInfo[]>([]));
     const remotesPromise = selectedProject && needsRemotes ? asResource(() => apiClient.getRemotes(selectedProject)) : Promise.resolve(readyResource<GitRemoteInfo[]>([]));
 
-    const [library, preferences, status, branches, remotes, stashes, tags, reflog, worktrees, submodules, lfs, gitignore, signing, identity, hostingAccounts] = await Promise.all([
+    const [library, preferences, llmSettings, status, branches, remotes, stashes, tags, reflog, worktrees, submodules, lfs, gitignore, signing, identity, hostingAccounts] = await Promise.all([
       libraryPromise,
       preferencesPromise,
+      llmSettingsPromise,
       statusPromise,
       branchesPromise,
       remotesPromise,
@@ -289,10 +304,13 @@ export function RepositoryCenterContainer({
       recent: shouldLoad("recent") ? (library.status === "error" ? errorResource(library.error, []) : readyResource(
         libraryData.recentProjectIds.map((id) => recentById.get(id)).filter((item): item is RepositoryProjectSummary => Boolean(item))
       )) : current.recent,
-      preferences: shouldLoad("preferences") ? mapResource(preferences, toRepositoryPreferences, toRepositoryPreferences(defaultPreferences())) : current.preferences
+      preferences: shouldLoad("preferences")
+        ? mapResource(preferences, (value) => toRepositoryPreferences(value, desktopPlatform), toRepositoryPreferences(defaultPreferences(), desktopPlatform))
+        : current.preferences,
+      llmSettings: shouldLoad("llmSettings") ? llmSettings : current.llmSettings
     }));
     return true;
-  }, [onLibraryChange]);
+  }, [desktopPlatform, onLibraryChange]);
 
   useEffect(() => {
     loadedSectionsRef.current.clear();
@@ -846,17 +864,34 @@ export function RepositoryCenterContainer({
       }
     },
     onSavePreferences: async (preferences) => {
-      const saved = await apiClient.updateUiPreferences(fromRepositoryPreferences(preferences));
+      const saved = await apiClient.updateUiPreferences(fromRepositoryPreferences(preferences, desktopPlatform));
       onPreferencesChange(saved);
-      setData((current) => ({ ...current, preferences: readyResource(toRepositoryPreferences(saved)) }));
+      setData((current) => ({ ...current, preferences: readyResource(toRepositoryPreferences(saved, desktopPlatform)) }));
+    },
+    onSaveLlmSettings: async (input) => {
+      const saved = await apiClient.saveLlmSettings(input);
+      setData((current) => ({ ...current, llmSettings: readyResource(saved) }));
+    },
+    onTestLlmConnection: async (input) => {
+      const result = await apiClient.testLlmConnection(input);
+      return `LLM 连接测试成功：${result.model}`;
+    },
+    onClearLlmApiKey: async () => {
+      await apiClient.clearLlmApiKey();
+      setData((current) => ({
+        ...current,
+        llmSettings: readyResource({ ...current.llmSettings.data, apiKeyConfigured: false })
+      }));
     }
-  }), [data, loadAll, onClose, onOpenProject, onPreferencesChange, onProjectsChange, onRepositoryChange, project, projects]);
+  }), [data, desktopPlatform, loadAll, onClose, onOpenProject, onPreferencesChange, onProjectsChange, onRepositoryChange, project, projects]);
 
   const currentStatus = repositoryStatus;
   return (
     <RepositoryCenter
       open={open}
       initialTab={initialTab}
+      cloneInputFocusRequest={cloneInputFocusRequest}
+      llmFocusRequest={llmFocusRequest}
       repository={{
         id: project?.id ?? "no-project",
         name: project?.name ?? "项目管理",
@@ -887,7 +922,8 @@ function emptyCenterData(): RepositoryCenterData {
     identity: readyResource({ valid: false, issues: [] }),
     hosting: readyResource([]), hostingAccounts: readyResource([]), hostingChanges: readyResource([]),
     projects: readyResource([]), groups: readyResource([]), recent: readyResource([]),
-    preferences: readyResource(toRepositoryPreferences(defaultPreferences()))
+    preferences: readyResource(toRepositoryPreferences(defaultPreferences())),
+    llmSettings: readyResource({ baseUrl: "", model: "", apiKeyConfigured: false, insecurePrivateHttp: false })
   };
 }
 
@@ -1070,7 +1106,7 @@ function isSupportedHostingRemote(remoteUrl: string): boolean {
   return ["github.com", "gitlab.com", "gitee.com"].includes(host.replace(/^www\./, ""));
 }
 
-function toRepositoryPreferences(value: UiPreferences): RepositoryPreferences {
+function toRepositoryPreferences(value: UiPreferences, platform: DesktopPlatform = readDesktopPlatform()): RepositoryPreferences {
   return {
     theme: value.theme,
     fontFamily: value.fontFamily.toLowerCase().includes("mono") ? "mono" : "system",
@@ -1085,11 +1121,11 @@ function toRepositoryPreferences(value: UiPreferences): RepositoryPreferences {
     consoleHeight: value.consoleHeight,
     bottomConsoleVisible: value.bottomConsoleVisible,
     confirmDestructiveActions: value.confirmDestructiveActions,
-    shortcuts: Object.entries(value.shortcuts).map(([id, keys]) => ({ id, label: shortcutLabels[id] ?? id, keys }))
+    shortcuts: Object.entries(value.shortcuts).map(([id, keys]) => ({ id, label: shortcutLabels[id] ?? id, keys: formatShortcut(keys, platform) }))
   };
 }
 
-function fromRepositoryPreferences(value: RepositoryPreferences): Partial<UiPreferences> {
+function fromRepositoryPreferences(value: RepositoryPreferences, platform: DesktopPlatform = readDesktopPlatform()): Partial<UiPreferences> {
   return {
     theme: value.theme,
     fontFamily: value.fontFamily === "mono" ? "monospace" : "system-ui",
@@ -1104,7 +1140,7 @@ function fromRepositoryPreferences(value: RepositoryPreferences): Partial<UiPref
     consoleHeight: value.consoleHeight,
     bottomConsoleVisible: value.bottomConsoleVisible,
     confirmDestructiveActions: value.confirmDestructiveActions,
-    shortcuts: Object.fromEntries(value.shortcuts.map((shortcut) => [shortcut.id, shortcut.keys]))
+    shortcuts: Object.fromEntries(value.shortcuts.map((shortcut) => [shortcut.id, shortcutInputToCanonical(shortcut.keys, platform)]))
   };
 }
 

@@ -1,0 +1,626 @@
+/*
+ * macOS desktop surface.
+ * This file is loaded last so platform-specific tokens win without changing
+ * the Windows/Linux renderer branch.
+ */
+
+.platform-macos {
+  --system-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  --display-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+  --mono-font: "SFMono-Regular", "SF Mono", Menlo, Monaco, monospace;
+  --bg: #f5f5f7;
+  --panel: #ffffff;
+  --panel-strong: #ffffff;
+  --surface: #f1f2f4;
+  --surface-2: #e9eaed;
+  --surface-3: #dedfe3;
+  --surface-hover: #e3e5e8;
+  --sunken: #f8f8fa;
+  --border: rgba(60, 60, 67, 0.18);
+  --border-strong: rgba(60, 60, 67, 0.28);
+  --text: #1d1d1f;
+  --text-strong: #111113;
+  --muted: #6e6e73;
+  --muted-strong: #4f5055;
+  --accent: #0a84ff;
+  --accent-contrast: #ffffff;
+  --blue: #0a84ff;
+  --warning: #9a6700;
+  --danger: #d70015;
+  --success: #248a3d;
+  --diff-add-bg: #e5f6e9;
+  --diff-del-bg: #ffe9ec;
+  --diff-text: #1d1d1f;
+  --line-number: #8a8a90;
+  --status-add-bg: #dff5e4;
+  --status-add-text: #187337;
+  --status-mod-bg: #fff2cf;
+  --status-mod-text: #825600;
+  --status-del-bg: #ffe1e6;
+  --status-del-text: #b00012;
+  --notice-bg: #fff7df;
+  --notice-border: #e7c766;
+  --scrollbar-thumb: rgba(60, 60, 67, 0.38);
+  --scrollbar-thumb-hover: rgba(60, 60, 67, 0.58);
+  --scrollbar-track: transparent;
+  --menu-surface: rgba(255, 255, 255, 0.98);
+  --dialog-surface: #ffffff;
+  --focus-ring: rgba(10, 132, 255, 0.7);
+  display: grid;
+  grid-template-rows: 50px minmax(0, 1fr);
+  background: var(--bg);
+  font-family: var(--app-font);
+  letter-spacing: 0;
+}
+
+.platform-macos.theme-dark {
+  --bg: #1e1e1e;
+  --panel: #242424;
+  --panel-strong: #2c2c2e;
+  --surface: #303033;
+  --surface-2: #38383b;
+  --surface-3: #454549;
+  --surface-hover: #3b3b3f;
+  --sunken: #1b1b1d;
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --text: #f5f5f7;
+  --text-strong: #ffffff;
+  --muted: #a1a1a6;
+  --muted-strong: #d1d1d6;
+  --accent: #0a84ff;
+  --accent-contrast: #ffffff;
+  --blue: #409cff;
+  --warning: #ffd60a;
+  --danger: #ff453a;
+  --success: #30d158;
+  --diff-add-bg: #17351f;
+  --diff-del-bg: #401d23;
+  --diff-text: #f5f5f7;
+  --line-number: #85858a;
+  --status-add-bg: #1d4529;
+  --status-add-text: #8ee6a5;
+  --status-mod-bg: #4a3c16;
+  --status-mod-text: #ffd866;
+  --status-del-bg: #4b2027;
+  --status-del-text: #ff9ba0;
+  --notice-bg: #3c3217;
+  --notice-border: #816d28;
+  --scrollbar-thumb: rgba(235, 235, 245, 0.3);
+  --scrollbar-thumb-hover: rgba(235, 235, 245, 0.5);
+  --menu-surface: rgba(45, 45, 47, 0.98);
+  --dialog-surface: #2d2d2f;
+  --focus-ring: rgba(64, 156, 255, 0.8);
+}
+
+.platform-macos,
+.platform-macos body,
+.platform-macos button,
+.platform-macos input,
+.platform-macos textarea,
+.platform-macos select {
+  font-family: var(--app-font);
+}
+
+.platform-macos code,
+.platform-macos pre,
+.platform-macos .line-number,
+.platform-macos .commit-hash,
+.platform-macos .graph-commit-meta,
+.platform-macos .scm-file-status,
+.platform-macos .muted-command {
+  font-family: var(--mono-font);
+}
+
+.platform-macos .app-chrome {
+  grid-template-rows: 50px;
+  min-height: 50px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: none;
+  -webkit-app-region: drag;
+}
+
+.platform-macos .app-chrome-titlebar {
+  grid-template-columns: 72px 36px minmax(0, 1fr);
+  grid-template-rows: 50px;
+  min-height: 50px;
+}
+
+.platform-macos .app-chrome-traffic-light-safe-zone {
+  grid-column: 1;
+  grid-row: 1;
+  width: 72px;
+  height: 50px;
+  pointer-events: none;
+  -webkit-app-region: drag;
+}
+
+.platform-macos .app-chrome-sidebar-button {
+  grid-column: 2;
+  grid-row: 1;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted-strong);
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+.platform-macos .app-chrome-sidebar-button:hover,
+.platform-macos .app-chrome-sidebar-button:focus-visible {
+  color: var(--text-strong);
+  background: var(--surface);
+}
+
+.platform-macos .app-chrome-current-project {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: center;
+  max-width: min(520px, calc(100% - 32px));
+  color: var(--text-strong);
+  font-family: var(--display-font);
+  font-size: 13px;
+  font-weight: 500;
+  -webkit-app-region: drag;
+}
+
+.platform-macos .app-chrome-drag-region {
+  grid-column: 3;
+  grid-row: 1;
+  height: 50px;
+  -webkit-app-region: drag;
+}
+
+.platform-macos .app-shell {
+  grid-template-columns: var(--sidebar-width) 1px var(--branch-width) 1px minmax(0, 1fr);
+  grid-template-rows: 50px minmax(0, 1fr);
+  background: var(--bg);
+}
+
+.platform-macos .app-shell.left-collapsed {
+  grid-template-columns: var(--branch-width) 1px minmax(0, 1fr);
+}
+
+.platform-macos .app-shell > .project-rail,
+.platform-macos .app-shell > .collapsed-sidebar { grid-column: 1; }
+.platform-macos .app-shell > .sidebar-resize { grid-column: 2; }
+.platform-macos .app-shell > .branch-rail { grid-column: 3; }
+.platform-macos .app-shell > .branch-rail-resize { grid-column: 4; }
+.platform-macos .app-shell > .workspace-shell { grid-column: 5; }
+.platform-macos .app-shell.left-collapsed > .branch-rail { grid-column: 1; }
+.platform-macos .app-shell.left-collapsed > .branch-rail-resize { grid-column: 2; }
+.platform-macos .app-shell.left-collapsed > .workspace-shell { grid-column: 3; }
+
+@media (max-width: 900px) {
+  .platform-macos .app-shell { grid-template-columns: var(--sidebar-width) 1px minmax(0, 1fr); }
+  .platform-macos .app-shell.left-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .platform-macos .app-shell > .branch-rail,
+  .platform-macos .app-shell > .branch-rail-resize { display: none; }
+  .platform-macos .app-shell > .workspace-shell { grid-column: 3; }
+  .platform-macos .app-shell.left-collapsed > .workspace-shell { grid-column: 1; }
+}
+
+.platform-macos .project-rail,
+.platform-macos .collapsed-sidebar {
+  margin: 0;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+  box-shadow: none;
+}
+
+.platform-macos .project-rail-header,
+.platform-macos .collapsed-sidebar-header {
+  min-height: 50px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+
+.platform-macos .project-rail-list,
+.platform-macos .collapsed-sidebar-list {
+  background: transparent;
+}
+
+.platform-macos .project-rail-item,
+.platform-macos .project-item {
+  min-height: 34px;
+  margin: 1px 6px;
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.platform-macos .project-rail-item:hover,
+.platform-macos .project-item:hover {
+  background: var(--surface-hover);
+}
+
+.platform-macos .project-rail-item.active,
+.platform-macos .project-item.active {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.platform-macos .project-rail-footer {
+  border-top: 1px solid var(--border);
+  background: transparent;
+}
+
+.platform-macos .sidebar-resize,
+.platform-macos .detail-resize,
+.platform-macos .console-resize {
+  background: var(--border);
+}
+
+.platform-macos .workspace-shell,
+.platform-macos .workspace-view,
+.platform-macos .source-control-pane,
+.platform-macos .detail-stack,
+.platform-macos .detail-panel,
+.platform-macos .editor-detail-panel,
+.platform-macos .graph-panel,
+.platform-macos .scm-panel-body,
+.platform-macos .graph-commit-list,
+.platform-macos .branch-list {
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.platform-macos .source-control-pane,
+.platform-macos .detail-panel {
+  border-color: var(--border);
+}
+
+.platform-macos .scm-panel-toggle,
+.platform-macos .graph-section-title,
+.platform-macos .console-titlebar,
+.platform-macos .console-toolbar,
+.platform-macos .scm-header,
+.platform-macos .workspace-toolbar,
+.platform-macos .detail-panel-header {
+  min-height: 34px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-strong);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.platform-macos .scm-panel-toggle,
+.platform-macos .graph-section-title {
+  border-radius: 0;
+  padding-inline: 10px;
+}
+
+.platform-macos .scm-file-row,
+.platform-macos .graph-commit-row,
+.platform-macos .graph-commit-file-row,
+.platform-macos .branch-list-item,
+.platform-macos .editor-tab,
+.platform-macos .file-row-button {
+  border-radius: 5px;
+}
+
+.platform-macos .scm-file-row:hover,
+.platform-macos .graph-commit-row:hover,
+.platform-macos .graph-commit-file-row:hover,
+.platform-macos .branch-list-item:hover,
+.platform-macos .editor-tab:hover,
+.platform-macos .file-row-button:hover {
+  background: var(--surface-hover);
+}
+
+.platform-macos .scm-file-row.active,
+.platform-macos .graph-commit-row.active,
+.platform-macos .graph-commit-file-row.active,
+.platform-macos .branch-list-item.active,
+.platform-macos .editor-tab.active,
+.platform-macos .file-row-button.active {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+
+.platform-macos .icon-button,
+.platform-macos .toolbar-button,
+.platform-macos .text-button,
+.platform-macos .filter-button,
+.platform-macos .graph-title-toggle,
+.platform-macos .scm-panel-toggle,
+.platform-macos .scm-commit-menu,
+.platform-macos .console-icon-button {
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted-strong);
+  background: transparent;
+  box-shadow: none;
+}
+
+.platform-macos .icon-button:hover,
+.platform-macos .toolbar-button:hover,
+.platform-macos .text-button:hover,
+.platform-macos .filter-button:hover,
+.platform-macos .graph-title-toggle:hover,
+.platform-macos .scm-commit-menu:hover,
+.platform-macos .console-icon-button:hover {
+  border-color: var(--border);
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.platform-macos .scm-commit-button,
+.platform-macos .primary-action,
+.platform-macos .repository-center-button.primary,
+.platform-macos .remote-connect-button {
+  min-height: 30px;
+  border-radius: 6px;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.platform-macos .scm-commit-button:hover:not(:disabled),
+.platform-macos .primary-action:hover:not(:disabled),
+.platform-macos .repository-center-button.primary:hover:not(:disabled),
+.platform-macos .remote-connect-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 86%, #000);
+}
+
+.platform-macos input,
+.platform-macos textarea,
+.platform-macos select,
+.platform-macos .search-box,
+.platform-macos .history-search,
+.platform-macos .branch-search,
+.platform-macos .project-rail-search,
+.platform-macos .remote-address-input,
+.platform-macos .remote-key-input {
+  min-height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--sunken);
+  box-shadow: none;
+}
+
+.platform-macos textarea {
+  min-height: 56px;
+}
+
+.platform-macos input:focus,
+.platform-macos textarea:focus,
+.platform-macos select:focus,
+.platform-macos .search-box:focus-within,
+.platform-macos .history-search:focus-within,
+.platform-macos .branch-search:focus-within,
+.platform-macos .project-rail-search:focus-within,
+.platform-macos .remote-address-input:focus-within,
+.platform-macos .remote-key-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.platform-macos .branch-rail-search input[type="search"] {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 0;
+  height: 26px;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  box-shadow: none;
+}
+
+.platform-macos .branch-rail-search input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.platform-macos .branch-rail-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.platform-macos button:focus-visible,
+.platform-macos [role="button"]:focus-visible,
+.platform-macos input:focus-visible,
+.platform-macos textarea:focus-visible,
+.platform-macos select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.platform-macos .console-panel,
+.platform-macos .console-terminal-stack,
+.platform-macos .console-terminal,
+.platform-macos .xterm {
+  border-color: var(--border);
+  border-radius: 0;
+  background: var(--sunken);
+  box-shadow: none;
+}
+
+.platform-macos .console-panel {
+  margin: 0;
+}
+
+.platform-macos .console-titlebar,
+.platform-macos .console-toolbar {
+  background: var(--surface);
+}
+
+.platform-macos .floating-menu,
+.platform-macos .commit-menu,
+.platform-macos .graph-view-menu,
+.platform-macos .context-menu,
+.platform-macos .project-context-menu,
+.platform-macos .app-chrome-theme-menu,
+.platform-macos .path-tooltip-popover {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--menu-surface);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.platform-macos .floating-menu button,
+.platform-macos .commit-menu button,
+.platform-macos .graph-view-menu button,
+.platform-macos .context-menu button,
+.platform-macos .project-context-menu button,
+.platform-macos .app-chrome-theme-menu > button {
+  min-height: 28px;
+  border-radius: 5px;
+  color: var(--text);
+}
+
+.platform-macos .floating-menu button:hover,
+.platform-macos .floating-menu button.active,
+.platform-macos .commit-menu button:hover,
+.platform-macos .graph-view-menu button:hover,
+.platform-macos .context-menu button:hover,
+.platform-macos .project-context-menu button:hover,
+.platform-macos .app-chrome-theme-menu > button:hover,
+.platform-macos .app-chrome-theme-menu > button[aria-checked="true"] {
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.platform-macos .branch-dialog,
+.platform-macos .merge-dialog,
+.platform-macos .remote-project-dialog,
+.platform-macos .feedback-confirm-dialog,
+.platform-macos .repository-center {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--dialog-surface);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.22);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.platform-macos .branch-dialog-header,
+.platform-macos .merge-dialog-header,
+.platform-macos .remote-project-dialog-header,
+.platform-macos .feedback-confirm-header,
+.platform-macos .repository-center-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.platform-macos .repository-center-backdrop,
+.platform-macos .branch-dialog-backdrop,
+.platform-macos .remote-project-dialog-backdrop,
+.platform-macos .feedback-confirm-backdrop {
+  background: rgba(0, 0, 0, 0.28);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.platform-macos .workspace-shell:has(.repository-center-backdrop) {
+  z-index: 6;
+}
+
+.platform-macos .repository-center-nav {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.platform-macos .repository-center-nav button {
+  min-height: 42px;
+  margin: 2px 6px;
+  border-radius: 6px;
+}
+
+.platform-macos .repository-center-nav button:hover,
+.platform-macos .repository-center-nav button.active {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+
+.platform-macos .repository-center-content,
+.platform-macos .repository-center-section,
+.platform-macos .repository-center-disclosure,
+.platform-macos .repository-center-preferences-grid fieldset {
+  border-color: var(--border);
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.platform-macos .repository-center-disclosure,
+.platform-macos .repository-center-preferences-grid fieldset {
+  border-radius: 6px;
+}
+
+.platform-macos [data-sonner-toast] {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--menu-surface);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+
+.platform-macos * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.platform-macos *::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.platform-macos *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.platform-macos *::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+
+.platform-macos *::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+
+.platform-macos *::-webkit-scrollbar-button,
+.platform-macos *::-webkit-scrollbar-corner {
+  display: none;
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-macos *,
+  .platform-macos *::before,
+  .platform-macos *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .platform-macos {
+    --border: rgba(60, 60, 67, 0.4);
+    --border-strong: rgba(60, 60, 67, 0.58);
+  }
+
+  .platform-macos.theme-dark {
+    --border: rgba(255, 255, 255, 0.28);
+    --border-strong: rgba(255, 255, 255, 0.45);
+  }
+}

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { desktopPlatformForNodePlatform, logicalShortcutIdentity } from "./platformConfig";
+
+const configPlatform = desktopPlatformForNodePlatform(process.platform);
 
 export interface GitProject {
   id: string;
@@ -107,12 +110,12 @@ const defaultConfig: AppConfig = {
     sidebarPosition: "left",
     confirmDestructiveActions: true,
     shortcuts: {
-      "project.search": "Ctrl+K",
-      "repository.center": "Ctrl+Shift+R",
-      "git.fetch": "Ctrl+Shift+F",
-      "git.pull": "Ctrl+Shift+L",
-      "git.push": "Ctrl+Shift+P",
-      "terminal.toggle": "Ctrl+`"
+      "project.search": "Mod+K",
+      "repository.center": "Mod+Shift+R",
+      "git.fetch": "Mod+Shift+F",
+      "git.pull": "Mod+Shift+L",
+      "git.push": "Mod+Shift+P",
+      "terminal.toggle": "Mod+`"
     }
   }
 };
@@ -654,7 +657,7 @@ function validateShortcutMap(shortcuts: Record<string, string>): void {
     if (!normalized) {
       continue;
     }
-    const identity = normalized.toLocaleLowerCase();
+    const identity = logicalShortcutIdentity(normalized, configPlatform) ?? normalized.toLocaleLowerCase();
     const existingCommand = assigned.get(identity);
     if (existingCommand) {
       throw new Error(`快捷键 ${value} 同时分配给了 ${existingCommand} 和 ${command}。`);
@@ -663,7 +666,7 @@ function validateShortcutMap(shortcuts: Record<string, string>): void {
   }
 }
 
-const shortcutModifierAliases: Record<string, "ctrl" | "alt" | "shift" | "meta"> = {
+const shortcutModifierAliases: Record<string, "ctrl" | "alt" | "shift" | "meta" | "mod"> = {
   ctrl: "ctrl",
   control: "ctrl",
   alt: "alt",
@@ -671,9 +674,10 @@ const shortcutModifierAliases: Record<string, "ctrl" | "alt" | "shift" | "meta">
   shift: "shift",
   meta: "meta",
   cmd: "meta",
-  command: "meta"
+  command: "meta",
+  mod: "mod"
 };
-const shortcutModifierOrder = ["ctrl", "alt", "shift", "meta"] as const;
+const shortcutModifierOrder = ["ctrl", "alt", "shift", "meta", "mod"] as const;
 
 function normalizeShortcut(value: unknown, command: string): string {
   if (typeof value !== "string") {
@@ -683,7 +687,7 @@ function normalizeShortcut(value: unknown, command: string): string {
   if (tokens.length === 0) {
     return "";
   }
-  const modifiers = new Set<"ctrl" | "alt" | "shift" | "meta">();
+  const modifiers = new Set<"ctrl" | "alt" | "shift" | "meta" | "mod">();
   const mainKeys: string[] = [];
   for (const token of tokens) {
     const modifier = shortcutModifierAliases[token];
@@ -699,11 +703,12 @@ function normalizeShortcut(value: unknown, command: string): string {
   if (mainKeys.length !== 1) {
     throw new Error(mainKeys.length === 0 ? `快捷键 ${command} 缺少主按键。` : `快捷键 ${command} 只能包含一个主按键。`);
   }
-  const modifierLabels: Record<"ctrl" | "alt" | "shift" | "meta", string> = {
+  const modifierLabels: Record<"ctrl" | "alt" | "shift" | "meta" | "mod", string> = {
     ctrl: "Ctrl",
     alt: "Alt",
     shift: "Shift",
-    meta: "Meta"
+    meta: "Meta",
+    mod: "Mod"
   };
   const key = /^[a-z0-9]$/i.test(mainKeys[0]) || /^f\d+$/i.test(mainKeys[0])
     ? mainKeys[0].toLocaleUpperCase()

@@ -27,6 +27,11 @@ import type {
   GitLfsLock,
   GitLfsMigrateOptions,
   GitLinkedWorktree,
+  LlmCommitMessageResult,
+  LlmConnectionTestInput,
+  LlmConnectionTestResult,
+  LlmSettingsSummary,
+  LlmSettingsUpdate,
   GitMergePreview,
   GitMergeStrategy,
   GitOperationResult,
@@ -66,10 +71,28 @@ import type {
   WorktreeState
 } from "./domain";
 import type { GitLongOperationOptions, GitLongOperationProgress } from "./operations";
+import type { DesktopPlatform, MenuCommand } from "../../electron/platformConfig";
 
 export interface WindowState {
   isMaximized: boolean;
   isFullScreen: boolean;
+}
+
+export interface NativeMenuState {
+  themeMode: "system" | "light" | "dark";
+  sidebarVisible: boolean;
+  consoleVisible: boolean;
+}
+
+export interface NativeMenuSummaryItem {
+  label?: string;
+  role?: string;
+  type?: string;
+  accelerator?: string;
+  command?: MenuCommand;
+  externalLink?: string;
+  checked?: boolean;
+  submenu?: NativeMenuSummaryItem[];
 }
 
 export type UpdatePhase =
@@ -142,11 +165,16 @@ export interface UpdateReleaseDetails {
 }
 
 export interface GitUIBridge {
+  platform: DesktopPlatform;
   runAppCommand: (command: string) => Promise<boolean>;
   openExternal: (url: string) => Promise<boolean>;
   openPath: (filePath: string) => Promise<boolean>;
   revealPath: (filePath: string) => Promise<boolean>;
   setNativeTheme: (themeSource: "system" | "light" | "dark") => Promise<boolean>;
+  onMenuCommand: (callback: (command: MenuCommand) => void) => () => void;
+  notifyMenuReady: () => void;
+  setNativeMenuState: (state: NativeMenuState) => Promise<boolean>;
+  getNativeMenuSummary: () => Promise<NativeMenuSummaryItem[]>;
   getWindowState: () => Promise<WindowState>;
   onWindowStateChange: (callback: (state: WindowState) => void) => () => void;
   getUpdateState: () => Promise<UpdateState>;
@@ -188,6 +216,11 @@ export interface GitUIBridge {
   removeRecentProject: (projectId: string) => Promise<boolean>;
   getUiPreferences: () => Promise<UiPreferences>;
   updateUiPreferences: (input: Partial<UiPreferences>) => Promise<UiPreferences>;
+  getLlmSettings: () => Promise<LlmSettingsSummary>;
+  saveLlmSettings: (input: LlmSettingsUpdate) => Promise<LlmSettingsSummary>;
+  clearLlmApiKey: () => Promise<boolean>;
+  testLlmConnection: (input: LlmConnectionTestInput) => Promise<LlmConnectionTestResult>;
+  generateCommitMessage: (repository: RepositoryTarget) => Promise<LlmCommitMessageResult>;
   addProject: (directoryPath: string) => Promise<GitProject>;
   initializeRepository: (directoryPath: string, initialBranch: string, createGitignore: boolean) => Promise<RepositoryCreationResult>;
   cloneRepository: (sourceUrl: string, destinationPath: string, options: GitCloneOptions, operation?: GitLongOperationOptions) => Promise<RepositoryCreationResult>;
@@ -239,6 +272,7 @@ export interface GitUIBridge {
   switchBranch: (repository: RepositoryTarget, branch: BranchInfo) => Promise<GitOperationResult>;
   getMergePreview: (repository: RepositoryTarget, targetBranch: string) => Promise<GitMergePreview>;
   mergeCurrentBranch: (repository: RepositoryTarget, targetBranch: string, strategy: GitMergeStrategy) => Promise<GitOperationResult>;
+  mergeIntoCurrentBranch: (repository: RepositoryTarget, sourceBranch: string, strategy: GitMergeStrategy) => Promise<GitOperationResult>;
   continueMerge: (repository: RepositoryTarget) => Promise<GitOperationResult>;
   abortMerge: (repository: RepositoryTarget) => Promise<GitOperationResult>;
   startRebase: (repository: RepositoryTarget, upstream: string, onto?: string) => Promise<GitOperationResult>;
@@ -322,5 +356,7 @@ export interface GitUIBridge {
 declare global {
   interface Window {
     gitUI?: GitUIBridge;
+    __TEST_DESKTOP_PLATFORM__?: DesktopPlatform;
+    __TEST_MENU_COMMAND__?: (command: MenuCommand) => void;
   }
 }

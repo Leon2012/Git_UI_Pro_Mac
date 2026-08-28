@@ -4,6 +4,8 @@ import type { ReleaseHistoryItem } from "./releaseHistory";
 import type { UpdateSource, UpdateState } from "./updateService";
 import type { UpdateReleaseDetails } from "./updateDetails";
 import type { TerminalHistoryEntry } from "./configStore";
+import { desktopPlatformForNodePlatform, isMenuCommand, type MenuCommand } from "./platformConfig";
+import type { LlmConnectionTestInput, LlmSettingsUpdate } from "./llmService";
 
 type WindowState = {
   isMaximized: boolean;
@@ -11,11 +13,27 @@ type WindowState = {
 };
 
 contextBridge.exposeInMainWorld("gitUI", {
+  platform: desktopPlatformForNodePlatform(process.platform),
   runAppCommand: (command: string) => ipcRenderer.invoke("app:command", command),
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
   openPath: (filePath: string) => ipcRenderer.invoke("app:openPath", filePath),
   revealPath: (filePath: string) => ipcRenderer.invoke("app:revealPath", filePath),
   setNativeTheme: (themeSource: "system" | "light" | "dark") => ipcRenderer.invoke("theme:setNative", themeSource),
+  onMenuCommand: (callback: (command: MenuCommand) => void) => {
+    const listener = (_event: IpcRendererEvent, command: unknown) => {
+      if (isMenuCommand(command)) {
+        callback(command);
+      }
+    };
+    ipcRenderer.on("app:menuCommand", listener);
+    return () => ipcRenderer.removeListener("app:menuCommand", listener);
+  },
+  notifyMenuReady: () => {
+    ipcRenderer.send("app:menuReady");
+  },
+  setNativeMenuState: (state: { themeMode: "system" | "light" | "dark"; sidebarVisible: boolean; consoleVisible: boolean }) =>
+    ipcRenderer.invoke("app:setNativeMenuState", state),
+  getNativeMenuSummary: () => ipcRenderer.invoke("app:getNativeMenuSummary"),
   getWindowState: () => ipcRenderer.invoke("window:getState"),
   onWindowStateChange: (callback: (state: WindowState) => void) => {
     const listener = (_event: IpcRendererEvent, state: WindowState) => callback(state);
@@ -78,6 +96,11 @@ contextBridge.exposeInMainWorld("gitUI", {
   removeRecentProject: (projectId: string) => ipcRenderer.invoke("projects:removeRecent", projectId),
   getUiPreferences: () => ipcRenderer.invoke("preferences:get"),
   updateUiPreferences: (input: Record<string, unknown>) => ipcRenderer.invoke("preferences:update", input),
+  getLlmSettings: () => ipcRenderer.invoke("llm:getSettings"),
+  saveLlmSettings: (input: LlmSettingsUpdate) => ipcRenderer.invoke("llm:saveSettings", input),
+  clearLlmApiKey: () => ipcRenderer.invoke("llm:clearApiKey"),
+  testLlmConnection: (input: LlmConnectionTestInput) => ipcRenderer.invoke("llm:testConnection", input),
+  generateCommitMessage: (repositoryPath: RepositoryTarget) => ipcRenderer.invoke("llm:generateCommitMessage", repositoryPath),
   addProject: (directoryPath: string) => ipcRenderer.invoke("projects:add", directoryPath),
   initializeRepository: (directoryPath: string, initialBranch: string, createGitignore: boolean) =>
     ipcRenderer.invoke("projects:initializeRepository", directoryPath, initialBranch, createGitignore),
@@ -154,6 +177,8 @@ contextBridge.exposeInMainWorld("gitUI", {
   getMergePreview: (repositoryPath: RepositoryTarget, targetBranch: string) => ipcRenderer.invoke("git:getMergePreview", repositoryPath, targetBranch),
   mergeCurrentBranch: (repositoryPath: RepositoryTarget, targetBranch: string, strategy: "ff" | "no-ff") =>
     ipcRenderer.invoke("git:mergeCurrentBranch", repositoryPath, targetBranch, strategy),
+  mergeIntoCurrentBranch: (repositoryPath: RepositoryTarget, sourceBranch: string, strategy: "ff" | "no-ff") =>
+    ipcRenderer.invoke("git:mergeIntoCurrentBranch", repositoryPath, sourceBranch, strategy),
   continueMerge: (repositoryPath: RepositoryTarget) => ipcRenderer.invoke("git:continueMerge", repositoryPath),
   abortMerge: (repositoryPath: RepositoryTarget) => ipcRenderer.invoke("git:abortMerge", repositoryPath),
   startRebase: (repositoryPath: RepositoryTarget, upstream: string, onto?: string) => ipcRenderer.invoke("git:startRebase", repositoryPath, upstream, onto),

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions, type WebContents } from "electron";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -9,11 +9,22 @@ import { HostingService, type HostingCreateChangeInput, type HostingMergeInput, 
 import { inspectSshHost, trustScannedSshHost, type ScannedSshHost } from "./sshHostTrust";
 import { UpdateService, type UpdateState } from "./updateService";
 import { completePortableUpdateHealthCheck, initializePortableRuntime } from "./portableRuntime";
+import {
+  createMacMenuDescriptor,
+  createWindowOptions,
+  desktopPlatformForNodePlatform,
+  type DesktopPlatform,
+  type MenuCommand,
+  type MenuDescriptorItem
+} from "./platformConfig";
+import { MenuCommandDispatcher } from "./menuCommandDispatcher";
+import { LlmService, type LlmConnectionTestInput, type LlmSettingsUpdate } from "./llmService";
 
 let mainWindow: BrowserWindow | null = null;
 let configStore: ConfigStore;
 let updateService: UpdateService;
 let hostingService: HostingService;
+let llmService: LlmService;
 const gitService = new GitService();
 const terminalSessions = new Map<string, TerminalSession>();
 let terminalSessionSeed = 0;
@@ -21,6 +32,8 @@ let verifiedRemoteProject: { fingerprint: string; repositoryRoot: string; expire
 const pendingSshHostInspections = new Map<string, { scan: ScannedSshHost; expiresAt: number }>();
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+const desktopPlatform: DesktopPlatform = desktopPlatformForNodePlatform(process.platform);
+const isInterfaceSmokeTest = process.env.GIT_UI_PRO_INTERFACE_SMOKE === "1";
 type AppThemeSource = "system" | "light" | "dark";
 type WindowState = {
   isMaximized: boolean;
@@ -32,6 +45,22 @@ type TerminalSession = {
 };
 type LongOperationRequest = { operationId: string };
 type GitPushRequest = { forceWithLease?: boolean; operationId?: string };
+type NativeMenuState = {
+  themeMode: AppThemeSource;
+  sidebarVisible: boolean;
+  consoleVisible: boolean;
+};
+type NativeMenuSummaryItem = Omit<MenuDescriptorItem, "submenu"> & {
+  checked?: boolean;
+  submenu?: NativeMenuSummaryItem[];
+};
+
+let nativeMenuState: NativeMenuState = {
+  themeMode: "system",
+  sidebarVisible: true,
+  consoleVisible: true
+};
+let nativeMenuDescriptor: NativeMenuSummaryItem[] = [];
 
 // Avoid packaged Windows installs exiting when Chromium's GPU sandbox cannot start.
 app.commandLine.appendSwitch("disable-gpu-sandbox");
@@ -39,16 +68,26 @@ app.commandLine.appendSwitch("disable-gpu-sandbox");
 const portableRuntime = initializePortableRuntime(app);
 const isPortableSmokeTest = portableRuntime.isPortable && process.env.GIT_UI_PRO_PORTABLE_SMOKE_TEST === "1";
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const menuDispatcher = new MenuCommandDispatcher<BrowserWindow>({
+  getFocusedWindow: () => BrowserWindow.getFocusedWindow(),
+  getFallbackWindow: () => mainWindow,
+  createWindow: async () => {
+    await createWindow();
+    return mainWindow;
+  },
+  isDestroyed: (window) => window.isDestroyed() || window.webContents.isDestroyed(),
+  send: (window, command) => window.webContents.send("app:menuCommand", command)
+});
 
 async function createWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 860,
     minHeight: 640,
     icon: path.join(__dirname, process.platform === "win32" ? "../build/icon.ico" : "../build/icon.png"),
-    frame: false,
-    backgroundColor: "#101317",
+    ...createWindowOptions(desktopPlatform),
+    backgroundColor: nativeWindowBackgroundColor(),
     title: "Git UI Pro",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -60,12 +99,15 @@ async function createWindow(): Promise<void> {
       sandbox: false
     }
   });
-  registerWindowStateEvents(mainWindow);
+  mainWindow = window;
+  menuDispatcher.registerWindow(window);
+  registerWindowLifecycle(window);
+  registerWindowStateEvents(window);
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
-    await mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+    await window.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    await mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+    await window.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 }
 
@@ -75,14 +117,37 @@ function registerIpc(): void {
     return true;
   });
 
-  ipcMain.handle("app:openExternal", async (_event, url: string) => {
-    const target = new URL(url);
-    if (target.protocol !== "https:" && target.protocol !== "http:") {
-      return false;
+  ipcMain.on("app:menuReady", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!isCurrentWindow(window)) {
+      return;
     }
+    menuDispatcher.markReady(window);
+  });
 
-    await shell.openExternal(target.toString());
+  ipcMain.handle("app:setNativeMenuState", (event, value: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!isCurrentWindow(window)) {
+      throw new Error("无效的窗口菜单状态来源。");
+    }
+    nativeMenuState = normalizeNativeMenuState(value);
+    rebuildApplicationMenu();
     return true;
+  });
+
+  ipcMain.handle("app:getNativeMenuSummary", (event) => {
+    if (!isInterfaceSmokeTest || desktopPlatform !== "macos") {
+      throw new Error("原生菜单摘要仅在 macOS smoke 模式可用。");
+    }
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!isCurrentWindow(window)) {
+      throw new Error("无效的窗口菜单摘要来源。");
+    }
+    return nativeMenuDescriptor;
+  });
+
+  ipcMain.handle("app:openExternal", async (_event, url: string) => {
+    return openExternalUrl(url);
   });
 
   ipcMain.handle("app:openPath", async (_event, filePath: string) => {
@@ -202,6 +267,14 @@ function registerIpc(): void {
   });
   ipcMain.handle("preferences:get", () => configStore.getUiPreferences());
   ipcMain.handle("preferences:update", (_event, input: Partial<UiPreferences>) => configStore.updateUiPreferences(input));
+  ipcMain.handle("llm:getSettings", () => llmService.getSettings());
+  ipcMain.handle("llm:saveSettings", (_event, input: LlmSettingsUpdate) => llmService.saveSettings(input));
+  ipcMain.handle("llm:clearApiKey", () => llmService.clearApiKey());
+  ipcMain.handle("llm:testConnection", (_event, input: LlmConnectionTestInput) => llmService.testConnection(input));
+  ipcMain.handle("llm:generateCommitMessage", async (_event, repositoryPath: RepositoryLocation) => {
+    const context = await gitService.getCommitMessageContext(repositoryPath);
+    return llmService.generateCommitMessage(context);
+  });
 
   ipcMain.handle("projects:add", async (_event, directoryPath: string) => {
     const repositoryRoot = await gitService.getRepositoryRoot(directoryPath);
@@ -370,6 +443,9 @@ function registerIpc(): void {
   ipcMain.handle("git:mergeCurrentBranch", (_event, repositoryPath: RepositoryLocation, targetBranch: string, strategy: "ff" | "no-ff") =>
     gitService.mergeCurrentBranch(repositoryPath, targetBranch, strategy)
   );
+  ipcMain.handle("git:mergeIntoCurrentBranch", (_event, repositoryPath: RepositoryLocation, sourceBranch: string, strategy: "ff" | "no-ff") =>
+    gitService.mergeIntoCurrentBranch(repositoryPath, sourceBranch, strategy)
+  );
   ipcMain.handle("git:continueMerge", (_event, repositoryPath: RepositoryLocation) => gitService.continueMerge(repositoryPath));
   ipcMain.handle("git:abortMerge", (_event, repositoryPath: RepositoryLocation) => gitService.abortMerge(repositoryPath));
   ipcMain.handle("git:startRebase", (_event, repositoryPath: RepositoryLocation, upstream: string, onto?: string) =>
@@ -533,9 +609,32 @@ function requireLocalAbsolutePath(filePath: string): string {
   return path.normalize(value);
 }
 
+function nativeWindowBackgroundColor(): string {
+  if (nativeTheme.shouldUseDarkColors) {
+    return desktopPlatform === "macos" ? "#1e1e1e" : "#101317";
+  }
+  return desktopPlatform === "macos" ? "#f5f5f7" : "#f5f7fa";
+}
+
+function updateWindowBackgroundColors(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.setBackgroundColor(nativeWindowBackgroundColor());
+    }
+  }
+}
+
 function applyNativeTheme(themeSource: AppThemeSource): void {
   nativeTheme.themeSource = themeSource;
-  mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#101317" : "#f5f7fa");
+  nativeMenuState.themeMode = themeSource;
+  updateWindowBackgroundColors();
+  rebuildApplicationMenu();
+}
+
+function updateNativeThemeFromSystem(): void {
+  if (nativeMenuState.themeMode === "system") {
+    updateWindowBackgroundColors();
+  }
 }
 
 function getWindowState(): WindowState {
@@ -568,6 +667,46 @@ function registerWindowStateEvents(window: BrowserWindow): void {
   window.on("enter-full-screen", emit);
   window.on("leave-full-screen", emit);
   window.on("restore", emit);
+}
+
+function registerWindowLifecycle(window: BrowserWindow): void {
+  const resetRendererReady = () => {
+    menuDispatcher.invalidate(window);
+    menuDispatcher.registerWindow(window);
+  };
+  window.webContents.on("did-start-loading", resetRendererReady);
+  window.webContents.on("did-navigate", resetRendererReady);
+  window.on("closed", () => {
+    menuDispatcher.invalidate(window);
+    if (mainWindow === window) {
+      mainWindow = null;
+    }
+  });
+}
+
+function isCurrentWindow(window: BrowserWindow | null): window is BrowserWindow {
+  if (!window) {
+    return false;
+  }
+  return window === mainWindow && !window.isDestroyed() && !window.webContents.isDestroyed();
+}
+
+function normalizeNativeMenuState(value: unknown): NativeMenuState {
+  if (!value || typeof value !== "object") {
+    throw new Error("窗口菜单状态必须是对象。");
+  }
+  const input = value as Partial<NativeMenuState>;
+  if (input.themeMode !== "system" && input.themeMode !== "light" && input.themeMode !== "dark") {
+    throw new Error("窗口菜单主题状态无效。");
+  }
+  if (typeof input.sidebarVisible !== "boolean" || typeof input.consoleVisible !== "boolean") {
+    throw new Error("窗口菜单显隐状态无效。");
+  }
+  return {
+    themeMode: input.themeMode,
+    sidebarVisible: input.sidebarVisible,
+    consoleVisible: input.consoleVisible
+  };
 }
 
 function focusMainWindow(): void {
@@ -673,12 +812,28 @@ if (!hasSingleInstanceLock) {
     const userDataPath = app.getPath("userData");
     configStore = new ConfigStore(userDataPath);
     hostingService = new HostingService(userDataPath);
+    llmService = new LlmService(userDataPath);
     if (isPortableSmokeTest) {
       await configStore.read();
       app.exit(0);
       return;
     }
-    updateService = new UpdateService(emitUpdateState, portableRuntime, await configStore.getUpdateSource());
+    const initialConfig = await configStore.read();
+    nativeMenuState = {
+      themeMode: initialConfig.ui.theme,
+      sidebarVisible: true,
+      consoleVisible: initialConfig.ui.bottomConsoleVisible
+    };
+    applyNativeTheme(initialConfig.ui.theme);
+    nativeTheme.on("updated", updateNativeThemeFromSystem);
+    if (process.platform === "darwin") {
+      app.setAboutPanelOptions({
+        applicationName: "Git UI Pro",
+        applicationVersion: app.getVersion(),
+        copyright: "Copyright © 2026 Git UI Pro"
+      });
+    }
+    updateService = new UpdateService(emitUpdateState, portableRuntime, initialConfig.updateSource);
     configureApplicationMenu();
     registerIpc();
     await createWindow();
@@ -710,6 +865,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.on("before-quit", () => {
+    nativeTheme.removeListener("updated", updateNativeThemeFromSystem);
     updateService?.stop();
   });
 }
@@ -893,7 +1049,90 @@ function remoteProjectFingerprint(input: RemoteProjectInput): string {
 }
 
 function configureApplicationMenu(): void {
-  Menu.setApplicationMenu(null);
+  rebuildApplicationMenu();
+}
+
+function rebuildApplicationMenu(): void {
+  if (desktopPlatform !== "macos") {
+    nativeMenuDescriptor = [];
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
+  nativeMenuDescriptor = decorateNativeMenuDescriptor(createMacMenuDescriptor({ isDev }), nativeMenuState);
+  Menu.setApplicationMenu(Menu.buildFromTemplate(toElectronMenuTemplate(nativeMenuDescriptor)));
+}
+
+function decorateNativeMenuDescriptor(items: MenuDescriptorItem[], state: NativeMenuState): NativeMenuSummaryItem[] {
+  return items.map((item) => {
+    const next: NativeMenuSummaryItem = {
+      ...item,
+      submenu: item.submenu ? decorateNativeMenuDescriptor(item.submenu, state) : undefined
+    };
+    if (item.command === "sidebar:toggle") {
+      next.label = state.sidebarVisible ? "隐藏项目侧栏" : "显示项目侧栏";
+    }
+    if (item.command === "console:toggle") {
+      next.label = state.consoleVisible ? "隐藏控制台" : "显示控制台";
+    }
+    if (item.command === "theme:system") {
+      next.checked = state.themeMode === "system";
+    }
+    if (item.command === "theme:light") {
+      next.checked = state.themeMode === "light";
+    }
+    if (item.command === "theme:dark") {
+      next.checked = state.themeMode === "dark";
+    }
+    return next;
+  });
+}
+
+function toElectronMenuTemplate(items: NativeMenuSummaryItem[]): MenuItemConstructorOptions[] {
+  return items.map((item) => {
+    const template: MenuItemConstructorOptions = {};
+    if (item.label) {
+      template.label = item.label;
+    }
+    if (item.role) {
+      template.role = item.role as MenuItemConstructorOptions["role"];
+    }
+    if (item.type && item.type !== "normal" && item.type !== "submenu") {
+      template.type = item.type;
+    }
+    if (item.accelerator) {
+      template.accelerator = item.accelerator;
+    }
+    if (item.checked !== undefined) {
+      template.checked = item.checked;
+    }
+    if (item.submenu) {
+      template.submenu = toElectronMenuTemplate(item.submenu);
+    }
+    if (item.command) {
+      template.click = () => {
+        menuDispatcher.dispatch(item.command!);
+      };
+    }
+    if (item.externalLink) {
+      template.click = () => {
+        void openExternalUrl(item.externalLink!);
+      };
+    }
+    if (item.role === "about") {
+      template.click = () => showAboutDialog();
+    }
+    return template;
+  });
+}
+
+async function openExternalUrl(url: string): Promise<boolean> {
+  const target = new URL(url);
+  if (target.protocol !== "https:" && target.protocol !== "http:") {
+    return false;
+  }
+  await shell.openExternal(target.toString());
+  return true;
 }
 
 function showAboutDialog(): void {

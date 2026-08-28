@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readFile, readdir, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, open, readFile, readlink, readdir, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import type { RemoteProjectInput, SshConnection } from "./configStore";
+import { buildCommitMessageContext, type CommitMessageContext, type CommitMessageContextFile } from "./llmService";
 
 export interface RepositoryTarget {
   path: string;
@@ -1153,6 +1154,36 @@ export class GitService {
     return sortWorktree(worktree);
   }
 
+  async getCommitMessageContext(repositoryPath: RepositoryLocation): Promise<CommitMessageContext> {
+    const worktree = await this.getWorktree(repositoryPath);
+    const staged = worktree.stagedFiles.length > 0;
+    const patchResult = await this.run(repositoryPath, staged
+      ? ["diff", "--cached", "--no-ext-diff", "--find-renames"]
+      : ["diff", "--no-ext-diff", "--find-renames"]);
+    if (!patchResult.ok) {
+      throw new Error(patchResult.messageZh ?? "无法读取用于生成提交消息的变更。" );
+    }
+
+    const untrackedFiles: CommitMessageContextFile[] = [];
+    if (!staged) {
+      const target = normalizeRepositoryTarget(repositoryPath);
+      const pendingUntrackedFiles = worktree.unstagedFiles.filter((item) => item.status === "untracked");
+      if (target.remote && pendingUntrackedFiles.length > 0) {
+        throw new Error("远程项目包含未跟踪文件，当前无法安全读取其内容；请先暂存这些文件后再生成提交消息。");
+      }
+      for (const file of pendingUntrackedFiles) {
+        untrackedFiles.push(await readUntrackedFileForLlm(target.path, file.path));
+      }
+    }
+
+    return buildCommitMessageContext({
+      worktree,
+      stagedPatch: staged ? patchResult.stdout : "",
+      unstagedPatch: staged ? "" : patchResult.stdout,
+      untrackedFiles
+    });
+  }
+
   async getWorktreeDiff(repositoryPath: RepositoryLocation, filePath: string, staged: boolean): Promise<DiffLine[]> {
     const args = staged
       ? ["diff", "--cached", FULL_FILE_DIFF_CONTEXT, "--", filePath]
@@ -2143,6 +2174,15 @@ export class GitService {
     } finally {
       this.activeMergeRepositories.delete(repositoryKey);
     }
+  }
+
+  async mergeIntoCurrentBranch(repositoryPath: RepositoryLocation, sourceBranch: string, strategy: GitMergeStrategy): Promise<GitOperationResult> {
+    const source = requireNonOptionValue(sourceBranch, "待合并分支");
+    if (strategy !== "ff" && strategy !== "no-ff") {
+      throw new Error("合并策略只支持 ff 或 no-ff。");
+    }
+    const strategyArg = strategy === "no-ff" ? "--no-ff" : "--ff";
+    return this.run(repositoryPath, ["merge", strategyArg, "--no-edit", source], { timeoutMs: mergeCommandTimeoutMs });
   }
 
   async continueMerge(repositoryPath: RepositoryLocation): Promise<GitOperationResult> {
@@ -4024,6 +4064,81 @@ function gitFailure(command: string, messageZh: string, stderr = ""): GitOperati
     exitCode: -1,
     messageZh
   };
+}
+
+export async function readUntrackedFileForLlm(
+  repositoryRoot: string,
+  filePath: string,
+  maxBytes = 32 * 1024
+): Promise<CommitMessageContextFile> {
+  const relativePath = requireSafeRelativePath(filePath, "未跟踪文件路径");
+  const root = path.resolve(repositoryRoot);
+  const absolutePath = path.resolve(root, relativePath);
+  if (absolutePath !== root && !absolutePath.startsWith(`${root}${path.sep}`)) {
+    throw new Error("未跟踪文件路径超出仓库范围。");
+  }
+
+  const fileInfo = await lstat(absolutePath);
+  if (fileInfo.isSymbolicLink()) {
+    const target = await readlink(absolutePath);
+    return {
+      path: relativePath,
+      kind: "symlink",
+      content: path.isAbsolute(target) ? "[absolute link target redacted]" : target
+    };
+  }
+  if (!fileInfo.isFile()) {
+    return {
+      path: relativePath,
+      kind: "other",
+      content: `[${describeFileType(fileInfo)} content omitted]`
+    };
+  }
+
+  const noFollowFlag = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+  const handle = await open(absolutePath, fsConstants.O_RDONLY | noFollowFlag);
+  try {
+    const openedInfo = await handle.stat();
+    if (!openedInfo.isFile()) {
+      return { path: relativePath, kind: "other", content: "[non-regular file content omitted]" };
+    }
+    const buffer = Buffer.alloc(Math.max(1, maxBytes) + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const content = buffer.subarray(0, bytesRead);
+    if (isBinaryBuffer(content)) {
+      return { path: relativePath, kind: "binary", content: "[binary content omitted]" };
+    }
+    const truncated = bytesRead > maxBytes;
+    const text = decodeGitOutput(content.subarray(0, maxBytes));
+    return {
+      path: relativePath,
+      kind: "text",
+      content: truncated ? `${text}\n[FILE TRUNCATED]` : text
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+function requireSafeRelativePath(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || /[\u0000\r\n]/.test(trimmed) || path.isAbsolute(trimmed)) {
+    throw new Error(`${label}必须是仓库内的相对路径。`);
+  }
+  const normalized = path.normalize(trimmed);
+  if (normalized === ".." || normalized.startsWith(`..${path.sep}`)) {
+    throw new Error(`${label}不能超出仓库范围。`);
+  }
+  return normalized;
+}
+
+function describeFileType(fileInfo: Awaited<ReturnType<typeof lstat>>): string {
+  if (fileInfo.isFIFO()) return "fifo";
+  if (fileInfo.isSocket()) return "socket";
+  if (fileInfo.isCharacterDevice()) return "character device";
+  if (fileInfo.isBlockDevice()) return "block device";
+  if (fileInfo.isDirectory()) return "directory";
+  return "non-regular file";
 }
 
 export function normalizeRepositoryTarget(location: RepositoryLocation): RepositoryTarget {

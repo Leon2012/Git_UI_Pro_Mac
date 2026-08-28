@@ -2,9 +2,20 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 
-async function openApp(page: Page) {
+type TestDesktopPlatform = "macos" | "windows" | "linux" | "web";
+
+async function openApp(page: Page, platform?: TestDesktopPlatform) {
+  if (platform) {
+    await page.addInitScript((injectedPlatform) => {
+      window.__TEST_DESKTOP_PLATFORM__ = injectedPlatform;
+    }, platform);
+  }
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "打开仓库中心" })).toBeVisible();
+  if (platform === "macos") {
+    await expect(page.locator(".app-shell.platform-macos")).toBeVisible();
+  } else {
+    await expect(page.getByRole("button", { name: "打开仓库中心" })).toBeVisible();
+  }
 }
 
 async function openFirstWorktreeFile(page: Page) {
@@ -87,7 +98,11 @@ function contrastRatio(foreground: string, background: string) {
 async function captureThemeSmoke(page: Page, testInfo: TestInfo, theme: "light" | "dark") {
   const styles = await page.locator(".app-shell").evaluate((element) => {
     const appStyle = getComputedStyle(element);
-    const topBarStyle = getComputedStyle(document.querySelector(".top-bar")!);
+    const topBar = document.querySelector<HTMLElement>(".top-bar, .app-chrome");
+    if (!topBar) {
+      throw new Error("缺少应用顶部栏。");
+    }
+    const topBarStyle = getComputedStyle(topBar);
     return {
       background: appStyle.getPropertyValue("--bg").trim(),
       text: appStyle.getPropertyValue("--text").trim(),
@@ -101,8 +116,8 @@ async function captureThemeSmoke(page: Page, testInfo: TestInfo, theme: "light" 
   expect(contrastRatio(styles.text, styles.background)).toBeGreaterThanOrEqual(7);
   expect(styles.topBarColor).not.toBe("rgba(0, 0, 0, 0)");
   expect(styles.topBarBackground).not.toBe("rgba(0, 0, 0, 0)");
-  expect(styles.topBarBorderRadius).not.toBe("0px");
-  expect(styles.topBarBoxShadow).not.toBe("none");
+  expect(styles.topBarBorderRadius).toMatch(/px$/);
+  expect(styles.topBarBoxShadow).toMatch(/none|rgba|rgb/);
   await testInfo.attach(`${theme}-theme`, {
     body: await page.screenshot({ fullPage: false }),
     contentType: "image/png"
@@ -153,8 +168,195 @@ test("桌面宽度打开仓库中心不会产生横向溢出", async ({ page }) 
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  await page.mouse.move(700, 700);
   await page.waitForTimeout(1_200);
   await expect(repositoryTooltip).toBeHidden();
+});
+
+test("偏好设置可配置、测试并清除 OpenAI 兼容 LLM", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "打开仓库中心" }).click();
+  const dialog = page.getByRole("dialog", { name: /git ui pro/i });
+  await dialog.getByRole("button", { name: /偏好设置/ }).click();
+
+  await expect(dialog.getByRole("heading", { name: "LLM" })).toBeVisible();
+  const baseUrl = dialog.getByLabel("Base URL");
+  const apiKey = dialog.getByLabel("API Key");
+  const model = dialog.getByLabel("Model");
+  await baseUrl.fill("http://192.168.0.113:11434/v1");
+  await model.fill("deepseek-chat");
+  await apiKey.fill("test-api-key");
+
+  await expect(dialog.getByText(/API Key 将通过未加密的内网 HTTP 连接传输/)).toBeVisible();
+  await dialog.getByRole("button", { name: "测试连接" }).click();
+  await expect(dialog.getByRole("status").filter({ hasText: /LLM 连接测试成功/ })).toBeVisible();
+
+  await dialog.getByRole("button", { name: "保存 LLM 设置" }).click();
+  await expect(dialog.getByText("API Key 已配置")).toBeVisible();
+  await expect(apiKey).toHaveValue("");
+
+  await dialog.getByRole("button", { name: "清除 API Key" }).click();
+  await expect(dialog.getByText("API Key 未配置")).toBeVisible();
+});
+
+test("主界面在项目与更改之间显示独立分支栏", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+  await expect(rail).toBeVisible();
+  await expect(rail.getByRole("heading", { name: "分支", exact: true })).toBeVisible();
+  await expect(rail.getByRole("heading", { name: "本地分支" })).toBeVisible();
+  await expect(rail.getByRole("heading", { name: "远程分支" })).toBeVisible();
+  await expect(rail.locator('[data-branch-name="master"]')).toHaveAttribute("data-current", "true");
+  await expect(rail.locator('[data-branch-name="feature/project-scan"]')).toBeVisible();
+  await expect(rail.locator('[data-branch-name="origin/master"]')).toBeVisible();
+
+  await rail.getByRole("searchbox", { name: "搜索分支" }).fill("feature");
+  await expect(rail.locator('[data-branch-name="feature/project-scan"]')).toBeVisible();
+  await expect(rail.locator('[data-branch-name="master"]')).toBeHidden();
+});
+
+test("分支搜索框只由外层容器绘制边框", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const search = page.getByRole("complementary", { name: "分支" }).getByRole("searchbox", { name: "搜索分支" });
+  const styles = await search.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      appearance: style.appearance,
+      borderTopWidth: style.borderTopWidth,
+      borderRadius: style.borderRadius,
+      boxShadow: style.boxShadow,
+      backgroundColor: style.backgroundColor
+    };
+  });
+  expect(styles).toEqual({
+    appearance: "none",
+    borderTopWidth: "0px",
+    borderRadius: "0px",
+    boxShadow: "none",
+    backgroundColor: "rgba(0, 0, 0, 0)"
+  });
+});
+
+test("macOS Retina 常用逻辑宽度保留分支栏并优先收起详情区", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  await expect(page.locator(".scm-file-row").first()).toBeVisible();
+
+  await page.setViewportSize({ width: 977, height: 800 });
+  await expect(page.getByRole("complementary", { name: "分支" })).toBeVisible();
+  await expect(page.locator(".source-control-pane")).toBeVisible();
+  await expect(page.locator(".main-grid > .detail-stack")).toBeHidden();
+
+  await page.setViewportSize({ width: 900, height: 800 });
+  await expect(page.getByRole("complementary", { name: "分支" })).toBeHidden();
+});
+
+test("右侧项目布局按拖拽方向调整分支栏宽度", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page);
+  await expect(page.locator(".scm-file-row").first()).toBeVisible();
+  await page.getByRole("button", { name: "打开仓库中心" }).click();
+  const dialog = page.getByRole("dialog", { name: /git ui pro/i });
+  await dialog.getByRole("button", { name: /偏好设置/ }).click();
+  await dialog.getByLabel("项目栏位置").selectOption("right");
+  await dialog.getByRole("button", { name: "保存设置" }).click();
+  await dialog.getByRole("button", { name: "关闭仓库中心" }).click();
+
+  const rail = page.getByRole("complementary", { name: "分支" });
+  const handle = page.locator(".branch-rail-resize");
+  const initialWidth = (await rail.boundingBox())?.width ?? 0;
+  const box = await handle.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + 80);
+  await page.mouse.down();
+  await page.mouse.move(box!.x - 40, box!.y + 80);
+  await page.mouse.up();
+  await expect.poll(async () => (await rail.boundingBox())?.width ?? 0).toBeGreaterThan(initialWidth + 20);
+});
+
+test("分支右键菜单按当前、本地和远程分支动态显示操作", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+
+  await rail.locator('[data-branch-name="master"]').click({ button: "right" });
+  let menu = page.getByRole("menu", { name: "分支操作" });
+  await expect(menu.getByRole("menuitem", { name: "拉取" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "推送" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "新建分支" })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await rail.locator('[data-branch-name="feature/project-scan"]').click({ button: "right" });
+  menu = page.getByRole("menu", { name: "分支操作" });
+  await expect(menu.getByRole("menuitem", { name: "切换到此分支" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "合并到当前分支" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "变基到此分支" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "重命名" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "删除本地分支" })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await rail.locator('[data-branch-name="origin/master"]').click({ button: "right" });
+  menu = page.getByRole("menu", { name: "分支操作" });
+  await expect(menu.getByRole("menuitem", { name: "创建跟踪分支" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "获取 origin" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "合并到当前分支" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "删除远程分支" })).toBeVisible();
+});
+
+test("分支省略号菜单支持键盘导航并在关闭后恢复焦点", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const trigger = page.getByRole("button", { name: "feature/project-scan 分支操作" });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+
+  const menu = page.getByRole("menu", { name: "分支操作" });
+  const firstItem = menu.getByRole("menuitem", { name: "切换到此分支" });
+  const lastItem = menu.getByRole("menuitem", { name: "删除本地分支" });
+  await expect(firstItem).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(lastItem).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
+test("未配置 LLM 时生成按钮打开并聚焦 LLM 偏好设置", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "使用 LLM 生成提交消息" }).click();
+
+  const dialog = page.getByRole("dialog", { name: /git ui pro/i });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "LLM" })).toBeVisible();
+  await expect(dialog.getByLabel("Base URL")).toBeFocused();
+});
+
+test("LLM 生成提交消息在确认后替换现有草稿且不自动提交", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "打开仓库中心" }).click();
+  const dialog = page.getByRole("dialog", { name: /git ui pro/i });
+  await dialog.getByRole("button", { name: /偏好设置/ }).click();
+  await dialog.getByLabel("Base URL").fill("http://192.168.0.113:11434/v1");
+  await dialog.getByLabel("Model").fill("deepseek-chat");
+  await dialog.getByLabel("API Key").fill("test-api-key");
+  await dialog.getByRole("button", { name: "保存 LLM 设置" }).click();
+  await expect(dialog.getByText("API Key 已配置")).toBeVisible();
+  await dialog.getByRole("button", { name: "关闭仓库中心" }).click();
+
+  const message = page.getByRole("textbox", { name: /在"master"提交/ });
+  await message.fill("chore: keep this draft");
+  await page.getByRole("button", { name: "使用 LLM 生成提交消息" }).click();
+  const confirm = page.getByRole("alertdialog", { name: "替换现有提交消息？" });
+  await expect(confirm).toBeVisible();
+  await confirm.getByRole("button", { name: "取消" }).click();
+  await expect(message).toHaveValue("chore: keep this draft");
+
+  await page.getByRole("button", { name: "使用 LLM 生成提交消息" }).click();
+  await confirm.getByRole("button", { name: "替换消息" }).click();
+  await expect(message).toHaveValue("feat(ui): update repository changes");
+  await expect(page.locator(".scm-file-row").first()).toBeVisible();
 });
 
 test("仓库中心按标签页加载并复用已读取的数据", async ({ page }) => {
@@ -368,7 +570,7 @@ test("项目栏头部使用单行等尺寸图标且搜索可展开", async ({ pa
   });
 
   const metrics = await page.evaluate(() => {
-    const topBar = document.querySelector<HTMLElement>(".top-bar")!;
+    const topBar = document.querySelector<HTMLElement>(".app-chrome")!;
     const search = document.querySelector<HTMLElement>(".project-rail-search")!;
     const searchInput = search.querySelector<HTMLInputElement>("input")!;
     const title = document.querySelector<HTMLElement>(".project-rail-header > strong")!;
@@ -433,12 +635,12 @@ test("项目栏头部使用单行等尺寸图标且搜索可展开", async ({ pa
   expect(focusVisual.inputBoxShadow).toBe("none");
   expect(focusVisual.inputOutlineWidth).toBe("0px");
 
-  await page.locator(".top-bar").hover();
+  await page.locator(".app-chrome").hover();
   await searchInput.hover();
   await expect(searchTooltip).toBeVisible();
   expect(await readTooltipVisual(searchTooltip)).toEqual(referenceTooltipVisual);
 
-  await page.locator(".top-bar .project-heading").click();
+  await page.locator(".workspace-shell").click({ position: { x: 12, y: 12 } });
   await expect(searchInput).not.toBeFocused();
   await expect.poll(async () => searchControl.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(44);
 });
@@ -493,6 +695,54 @@ test("标题栏常驻居中显示当前项目名称", async ({ page }) => {
   await expect(currentProject).toBeVisible();
   await page.getByRole("button", { name: "展开项目栏" }).click();
   await expect(currentProject).toBeVisible();
+});
+
+test("macOS 平台使用原生标题栏安全区并驱动菜单命令状态", async ({ page }) => {
+  await openApp(page, "macos");
+  const shell = page.locator(".app-shell.platform-macos");
+  await expect(shell).toHaveClass(/theme-light/);
+  await expect(page.locator(".app-chrome-traffic-light-safe-zone")).toBeVisible();
+  await expect(page.locator(".app-window-controls")).toHaveCount(0);
+  await expect(page.locator(".app-chrome-settings-button")).toHaveCount(0);
+  await expect(page.locator(".app-chrome-theme-control")).toHaveCount(0);
+
+  const titlebarMetrics = await page.locator(".app-chrome-titlebar").evaluate((element) => ({
+    height: element.getBoundingClientRect().height,
+    safeZoneWidth: element.querySelector<HTMLElement>(".app-chrome-traffic-light-safe-zone")?.getBoundingClientRect().width ?? 0
+  }));
+  expect(titlebarMetrics.height).toBe(50);
+  expect(titlebarMetrics.safeZoneWidth).toBe(72);
+
+  await page.evaluate(() => window.__TEST_MENU_COMMAND__?.("sidebar:toggle"));
+  await expect(shell).toHaveClass(/left-collapsed/);
+  await page.evaluate(() => window.__TEST_MENU_COMMAND__?.("sidebar:toggle"));
+  await expect(shell).not.toHaveClass(/left-collapsed/);
+
+  await page.evaluate(() => window.__TEST_MENU_COMMAND__?.("console:toggle"));
+  await expect(shell).toHaveClass(/console-open/);
+  await page.evaluate(() => window.__TEST_MENU_COMMAND__?.("console:toggle"));
+  await expect(shell).not.toHaveClass(/console-open/);
+
+  await page.evaluate(() => window.__TEST_MENU_COMMAND__?.("theme:dark"));
+  await expect(shell).toHaveClass(/theme-dark/);
+  await page.evaluate(() => window.__TEST_MENU_COMMAND__?.("theme:system"));
+  await expect(shell).toHaveClass(/theme-light/);
+
+  await page.evaluate(() => window.__TEST_MENU_COMMAND__?.("repository:clone"));
+  const center = page.getByRole("dialog", { name: /git ui pro/i });
+  await expect(center).toBeVisible();
+  await expect(center.locator(".repository-center-clone-source")).toBeFocused();
+  const centerBackgroundAlpha = await center.evaluate((element) => {
+    const color = getComputedStyle(element).backgroundColor;
+    const match = color.match(/^rgba?\([^,]+,[^,]+,[^,]+(?:,\s*([\d.]+))?\)$/);
+    return match?.[1] === undefined ? 1 : Number(match[1]);
+  });
+  expect(centerBackgroundAlpha).toBe(1);
+  const overlayLayers = await page.evaluate(() => ({
+    workspace: Number.parseInt(getComputedStyle(document.querySelector<HTMLElement>(".workspace-shell")!).zIndex, 10),
+    branchResize: Number.parseInt(getComputedStyle(document.querySelector<HTMLElement>(".branch-rail-resize")!).zIndex, 10)
+  }));
+  expect(overlayLayers.workspace).toBeGreaterThan(overlayLayers.branchResize);
 });
 
 test("未跟踪文件通过行内图标添加到 gitignore 并刷新更改列表", async ({ page }) => {
@@ -912,7 +1162,7 @@ test("文件对比铺满详情区并高亮行内变更", async ({ page }) => {
   expect(metrics.gridHeight).toBeGreaterThanOrEqual(metrics.panelClientHeight - 16);
 });
 
-test("窄屏文件对比自动切换行内布局并在空间恢复后返回左右布局", async ({ page }) => {
+test("窄屏文件对比在项目栏和分支栏收起后返回左右布局", async ({ page }) => {
   await page.setViewportSize({ width: 1536, height: 864 });
   await page.goto("/");
   const modifiedFile = page.locator(".scm-file-row").filter({ hasText: "App.tsx" }).first();
@@ -926,6 +1176,8 @@ test("窄屏文件对比自动切换行内布局并在空间恢复后返回左�
   expect(await diffPanel.evaluate((panel) => panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight))).toBeLessThan(960);
 
   await page.getByRole("button", { name: "收起项目栏" }).click();
+  await expect(diffPanel).not.toHaveClass(/split-mode/);
+  await page.getByRole("button", { name: "收起分支栏" }).click();
   await expect(diffPanel).toHaveClass(/split-mode/);
   await expect(diffPanel.locator(".split-diff-grid")).toBeVisible();
   expect(await diffPanel.evaluate((panel) => panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight))).toBeGreaterThanOrEqual(960);
@@ -1313,7 +1565,9 @@ test("切换回已查看的提交文件时复用缓存", async ({ page }) => {
 });
 
 test("提交变更文件默认使用可折叠树形视图", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
+  await page.getByRole("button", { name: "更多图表操作" }).click();
+  await page.getByRole("menuitemradio", { name: "以树形式查看" }).click();
   const firstCommit = page.locator(".graph-commit-row").first();
   await expect(firstCommit).toBeVisible();
   await firstCommit.click();
@@ -1427,7 +1681,8 @@ test("亮色和暗色主题保持关键文字可读并完成截图 smoke", async
   await expect(page.locator(".app-shell")).toHaveClass(/theme-light/);
   await captureThemeSmoke(page, testInfo, "light");
 
-  await page.getByRole("button", { name: "切换深色主题" }).click();
+  await page.getByRole("button", { name: "主题" }).click();
+  await page.getByRole("menuitemradio", { name: "黑暗" }).click();
   await expect(page.locator(".app-shell")).toHaveClass(/theme-dark/);
   await captureThemeSmoke(page, testInfo, "dark");
 });

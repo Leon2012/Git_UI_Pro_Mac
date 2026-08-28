@@ -17,6 +17,7 @@ import {
 import { Toaster, toast } from "sonner";
 import { apiClient } from "./api/client";
 import { AppChrome } from "./components/AppChrome";
+import { BranchRail, resolveBranchRailItems, type BranchAction, type BranchRailItem } from "./components/BranchRail";
 import { ConsolePanel } from "./components/ConsolePanel";
 import { FeedbackConfirmDialog, type FeedbackConfirmOptions } from "./components/FeedbackConfirmDialog";
 import { GraphSidebar } from "./components/GraphSidebar";
@@ -42,6 +43,7 @@ import type {
   GitMergeStrategy,
   GitOperationResult,
   GitProject,
+  GitRemoteInfo,
   GitResetMode,
   GitStatusSummary,
   ProjectLibraryState,
@@ -52,6 +54,9 @@ import type {
 } from "./types/domain";
 import { cancelGitOperation, dismissGitOperation, getGitOperationsSnapshot, subscribeGitOperations } from "./api/operationTracker";
 import { absoluteFilePath } from "./utils/filePath";
+import { desktopPlatformClass, readDesktopPlatform } from "./platform/desktop";
+import { matchesShortcut as matchesPlatformShortcut, type DesktopPlatform, type MenuCommand } from "../electron/platformConfig";
+import type { NativeMenuState } from "./types/electron";
 
 type ThemeMode = "system" | "light" | "dark";
 
@@ -104,7 +109,7 @@ const defaultUiPreferences = (): UiPreferences => ({
   shortcuts: {}
 });
 
-type ResizeTarget = "sidebar" | "detail" | "sourceSplit" | "console";
+type ResizeTarget = "sidebar" | "branches" | "detail" | "sourceSplit" | "console";
 type ToastId = string | number;
 type ProjectStatusRefresh = { projectId: string; status: GitStatusSummary };
 type ProjectDataSnapshot = {
@@ -131,6 +136,7 @@ type GitDependencyState =
   | { status: "missing"; message: string; details?: string };
 type BranchDialogState =
   | { mode: "create"; project: GitProject; branchName: string; checkout: boolean; startPoint?: string; startLabel?: string }
+  | { mode: "rename"; project: GitProject; branch: BranchInfo; branchName: string }
   | { mode: "switch"; project: GitProject; branches: BranchInfo[]; query: string }
   | { mode: "delete"; project: GitProject; branches: BranchInfo[]; query: string }
   | {
@@ -154,6 +160,7 @@ type CommitMessageDraftRequest = {
 };
 
 export function App() {
+  const desktopPlatform = readDesktopPlatform();
   const gitOperations = useSyncExternalStore(subscribeGitOperations, getGitOperationsSnapshot, getGitOperationsSnapshot);
   const [projects, setProjects] = useState<GitProject[]>([]);
   const [projectLibrary, setProjectLibrary] = useState<ProjectLibraryState>({ groups: [], recentProjectIds: [] });
@@ -175,6 +182,12 @@ export function App() {
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => readThemeMode());
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => resolveTheme(readThemeMode()));
   const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [branchRailWidth, setBranchRailWidth] = useState(210);
+  const [branchRailCollapsed, setBranchRailCollapsed] = useState(false);
+  const [branchRailBranches, setBranchRailBranches] = useState<BranchRailItem[]>([]);
+  const [branchRailLoading, setBranchRailLoading] = useState(false);
+  const [branchRailError, setBranchRailError] = useState("");
+  const [branchRailBusyAction, setBranchRailBusyAction] = useState("");
   const [detailWidth, setDetailWidth] = useState(defaultUiPreferences().rightPanelWidth);
   const [leftCollapsed, setLeftCollapsed] = useState(() => window.innerWidth <= 700);
   const [rightCollapsed, setRightCollapsed] = useState(false);
@@ -195,6 +208,9 @@ export function App() {
   const [pendingConfirm, setPendingConfirm] = useState<FeedbackConfirmOptions | null>(null);
   const [repositoryCenterOpen, setRepositoryCenterOpen] = useState(false);
   const [repositoryCenterInitialTab, setRepositoryCenterInitialTab] = useState<RepositoryCenterTab>("recovery");
+  const [repositoryCenterCloneFocusRequest, setRepositoryCenterCloneFocusRequest] = useState(0);
+  const [repositoryCenterLlmFocusRequest, setRepositoryCenterLlmFocusRequest] = useState(0);
+  const [initialDataReady, setInitialDataReady] = useState(false);
   const [uiPreferences, setUiPreferences] = useState<UiPreferences>(() => defaultUiPreferences());
   const projectsRef = useRef<GitProject[]>([]);
   const selectedProjectIdRef = useRef<string | null>(null);
@@ -214,8 +230,10 @@ export function App() {
   const pendingCommitFileLoadsRef = useRef(new Map<string, Promise<CommitFileCacheEntry>>());
   const activeCommitFileReadRef = useRef<{ cacheKey: string; requestId: string; cancelled: boolean }>();
   const pendingConfirmResolveRef = useRef<((confirmed: boolean) => void) | undefined>();
+  const branchRailRequestRef = useRef(0);
   const detailStackRef = useRef<HTMLElement | null>(null);
   const restoreConsoleHeightRef = useRef(DEFAULT_CONSOLE_HEIGHT);
+  const menuCommandHandlerRef = useRef<(command: MenuCommand) => void>(() => undefined);
 
   function rememberStatus(message: string) {
     setStatusMessage(message);
@@ -414,6 +432,35 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const unsubscribe = window.gitUI?.onMenuCommand?.((command) => menuCommandHandlerRef.current(command));
+    window.gitUI?.notifyMenuReady?.();
+    if (!import.meta.env.DEV) {
+      return () => unsubscribe?.();
+    }
+
+    const testMenuCommand = (command: MenuCommand) => menuCommandHandlerRef.current(command);
+    window.__TEST_MENU_COMMAND__ = testMenuCommand;
+    return () => {
+      unsubscribe?.();
+      if (window.__TEST_MENU_COMMAND__ === testMenuCommand) {
+        delete window.__TEST_MENU_COMMAND__;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const state: NativeMenuState = {
+      themeMode,
+      sidebarVisible: !leftCollapsed,
+      consoleVisible: consoleOpen
+    };
+    const syncPromise = window.gitUI?.setNativeMenuState?.(state);
+    void syncPromise?.catch((error) => {
+      rememberStatus(error instanceof Error ? error.message : "无法同步原生菜单状态");
+    });
+  }, [consoleOpen, leftCollapsed, themeMode]);
+
+  useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const syncTheme = () => setResolvedTheme(resolveTheme(themeMode));
     syncTheme();
@@ -508,12 +555,133 @@ export function App() {
   );
 
   useEffect(() => {
+    if (!selectedProject || !selectedProjectConnectionReady) {
+      branchRailRequestRef.current += 1;
+      setBranchRailBranches([]);
+      setBranchRailError("");
+      return;
+    }
+    void loadBranchRail(selectedProject);
+  }, [selectedProject?.id, selectedProjectConnectionReady]);
+
+  async function loadBranchRail(project: GitProject = selectedProject!) {
+    const requestId = ++branchRailRequestRef.current;
+    setBranchRailLoading(true);
+    setBranchRailError("");
+    try {
+      const [branches, remotes] = await Promise.all([
+        apiClient.getBranches(project),
+        apiClient.getRemotes(project).catch((): GitRemoteInfo[] => [])
+      ]);
+      if (requestId !== branchRailRequestRef.current || selectedProjectIdRef.current !== project.id) return;
+      setBranchRailBranches(resolveBranchRailItems(branches, remotes));
+    } catch (error) {
+      if (requestId !== branchRailRequestRef.current) return;
+      setBranchRailBranches([]);
+      setBranchRailError(errorText(error, "无法读取分支列表。"));
+    } finally {
+      if (requestId === branchRailRequestRef.current) setBranchRailLoading(false);
+    }
+  }
+
+  async function handleBranchRailAction(action: BranchAction, branch?: BranchRailItem) {
+    if (!selectedProject || branchRailBusyAction) return;
+    if (action === "create") {
+      await createBranchFromToolbar(selectedProject);
+      return;
+    }
+    if (action === "fetch" || action === "pull" || action === "push") {
+      if (await runRemoteOperation(action, selectedProject)) {
+        await loadBranchRail(selectedProject);
+      }
+      return;
+    }
+    if (!branch) return;
+    if (action === "rename") {
+      setBranchDialog({ mode: "rename", project: selectedProject, branch, branchName: branch.name });
+      return;
+    }
+
+    if (action === "merge-into-current") {
+      const confirmed = await requestConfirm({
+        title: `将 ${branch.name} 合并到 ${selectedProject.status?.currentBranch ?? "当前分支"}？`,
+        detail: "Git 将保留当前分支，并把所选分支的提交合并进来。发生冲突时可在更改区继续处理。",
+        confirmLabel: "开始合并"
+      });
+      if (!confirmed) return;
+    }
+    if (action === "rebase-onto") {
+      const confirmed = await requestDestructiveConfirm({
+        title: `将当前分支变基到 ${branch.name}？`,
+        detail: "变基会重写当前分支尚未合并的提交。",
+        confirmLabel: "开始变基",
+        tone: "warning"
+      });
+      if (!confirmed) return;
+    }
+    if (action === "delete-local" || action === "delete-remote") {
+      const confirmed = await requestDestructiveConfirm({
+        title: `删除分支 ${branch.name}？`,
+        detail: action === "delete-remote" ? "该操作会从远程仓库删除分支。" : "仅删除本地分支，不会删除远程分支。",
+        confirmLabel: "确认删除",
+        tone: "danger"
+      });
+      if (!confirmed) return;
+    }
+
+    setBranchRailBusyAction(`${action}:${branch.fullName}`);
+    try {
+      if (action === "switch" || action === "track-remote") {
+        const result = await apiClient.switchBranch(selectedProject, branch);
+        if (!notifyGitResult(result, `已切换到 ${branch.name}`, "切换分支失败，请查看原始 Git 输出。")) return;
+      } else if (action === "fetch-remote" && branch.remoteName) {
+        const result = await apiClient.fetchRemote(selectedProject, branch.remoteName, true);
+        if (!notifyGitResult(result, `已获取 ${branch.remoteName}`, "获取远程分支失败，请查看原始 Git 输出。")) return;
+      } else if (action === "merge-into-current") {
+        const result = await apiClient.mergeIntoCurrentBranch(selectedProject, branch.name, "ff");
+        if (!notifyGitResult(result, `已将 ${branch.name} 合并到当前分支`, "合并失败，请查看原始 Git 输出。")) return;
+      } else if (action === "rebase-onto") {
+        const result = await apiClient.startRebase(selectedProject, branch.name);
+        if (!notifyGitResult(result, `当前分支已变基到 ${branch.name}`, "变基失败，请查看原始 Git 输出。")) return;
+      } else if (action === "delete-local") {
+        const result = await apiClient.deleteBranch(selectedProject, branch.name, false);
+        if (!notifyGitResult(result, `已删除本地分支 ${branch.name}`, "删除本地分支失败，请查看原始 Git 输出。")) return;
+      } else if (action === "delete-remote" && branch.remoteName && branch.remoteBranchName) {
+        const result = await apiClient.deleteRemoteBranch(selectedProject, branch.remoteName, branch.remoteBranchName);
+        if (!notifyGitResult(result, `已删除远程分支 ${branch.name}`, "删除远程分支失败，请查看原始 Git 输出。")) return;
+      }
+      await Promise.all([loadProjectData(selectedProject), loadBranchRail(selectedProject)]);
+    } catch (error) {
+      notifyError(errorText(error, "分支操作失败。"));
+    } finally {
+      setBranchRailBusyAction("");
+    }
+  }
+
+  async function submitRenameBranch() {
+    if (!branchDialog || branchDialog.mode !== "rename" || branchDialogBusy) return;
+    const nextName = branchDialog.branchName.trim();
+    if (!nextName || nextName === branchDialog.branch.name) return;
+    setBranchDialogBusy(true);
+    try {
+      const result = await apiClient.renameBranch(branchDialog.project, branchDialog.branch.name, nextName, false);
+      if (!notifyGitResult(result, `已将分支重命名为 ${nextName}`, "重命名分支失败，请查看原始 Git 输出。")) return;
+      setBranchDialog(null);
+      await Promise.all([loadProjectData(branchDialog.project), loadBranchRail(branchDialog.project)]);
+    } catch (error) {
+      notifyError(errorText(error, "重命名分支失败。"));
+    } finally {
+      setBranchDialogBusy(false);
+    }
+  }
+
+  useEffect(() => {
     const handleShortcut = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat || isEditableShortcutTarget(event.target)) {
         return;
       }
 
-      const command = Object.entries(uiPreferences.shortcuts).find(([, shortcut]) => matchesShortcut(event, shortcut))?.[0];
+      const command = Object.entries(uiPreferences.shortcuts).find(([, shortcut]) => matchesPlatformShortcut(event, shortcut, desktopPlatform))?.[0];
       if (!command) {
         return;
       }
@@ -548,7 +716,7 @@ export function App() {
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [consoleOpen, leftCollapsed, selectedProject?.id, selectedProjectConnectionReady, uiPreferences.pullStrategy, uiPreferences.shortcuts]);
+  }, [consoleOpen, desktopPlatform, leftCollapsed, selectedProject?.id, selectedProjectConnectionReady, uiPreferences.pullStrategy, uiPreferences.shortcuts]);
 
   useEffect(() => {
     window.clearTimeout(selectedProjectLoadTimerRef.current);
@@ -704,6 +872,8 @@ export function App() {
       }
     } catch (error) {
       notifyError(error instanceof Error ? error.message : "初始化失败");
+    } finally {
+      setInitialDataReady(true);
     }
   }
 
@@ -1839,9 +2009,9 @@ export function App() {
     notifyInfo(`暂不支持操作：${action}`);
   }
 
-  async function runRemoteOperation(action: "fetch" | "pull" | "push", project: GitProject) {
+  async function runRemoteOperation(action: "fetch" | "pull" | "push", project: GitProject): Promise<boolean> {
     if (!requireGitReady({ fetch: "抓取", pull: "拉取", push: "推送" }[action])) {
-      return;
+      return false;
     }
 
     const label = action === "pull" ? `拉取（${pullStrategyLabel(uiPreferences.pullStrategy)}）` : { fetch: "抓取", push: "推送" }[action];
@@ -1859,13 +2029,14 @@ export function App() {
       notifyInfo("首次推送只需填写远程仓库地址", "软件会自动配置 origin，并关联当前分支。", toastId);
       setRepositoryCenterInitialTab("remotes");
       setRepositoryCenterOpen(true);
-      return;
+      return false;
     }
     if (!notifyGitResult(result, `${label}完成`, `${label}失败，请查看原始 Git 输出。`, toastId)) {
-      return;
+      return false;
     }
 
     await loadProjectData(project);
+    return true;
   }
 
   async function runSyncOperation(project: GitProject) {
@@ -2153,7 +2324,7 @@ export function App() {
       }
 
       setBranchDialog(null);
-      await loadProjectData(branchDialog.project);
+      await Promise.all([loadProjectData(branchDialog.project), loadBranchRail(branchDialog.project)]);
     } finally {
       setBranchDialogBusy(false);
     }
@@ -2217,7 +2388,7 @@ export function App() {
       }
 
       setBranchDialog(null);
-      await loadProjectData(project);
+      await Promise.all([loadProjectData(project), loadBranchRail(project)]);
     } finally {
       setBranchDialogBusy(false);
     }
@@ -2286,7 +2457,7 @@ export function App() {
 
       const project = branchDialog.project;
       setBranchDialog(null);
-      await loadProjectData(project);
+      await Promise.all([loadProjectData(project), loadBranchRail(project)]);
     } finally {
       setBranchDialogBusy(false);
     }
@@ -2868,13 +3039,59 @@ export function App() {
     return true;
   }
 
+  function openLlmPreferences() {
+    setRepositoryCenterInitialTab("preferences");
+    setRepositoryCenterOpen(true);
+    setRepositoryCenterLlmFocusRequest((value) => value + 1);
+  }
+
+  async function handleGenerateCommitMessage(currentDraft: string): Promise<string | null> {
+    if (!selectedProject) {
+      notifyInfo("请先选择一个 Git 项目");
+      return null;
+    }
+    try {
+      const settings = await apiClient.getLlmSettings();
+      if (!settings.baseUrl || !settings.model || !settings.apiKeyConfigured) {
+        notifyInfo("请先完成 LLM 设置", "需要配置 Base URL、API Key 和 Model。");
+        openLlmPreferences();
+        return null;
+      }
+    } catch (error) {
+      notifyError(errorText(error, "无法读取 LLM 设置。"));
+      return null;
+    }
+
+    if (currentDraft.trim()) {
+      const confirmed = await requestConfirm({
+        title: "替换现有提交消息？",
+        description: "LLM 生成的标题将替换当前草稿，不会自动提交。",
+        detail: currentDraft,
+        confirmLabel: "替换消息",
+        tone: "warning"
+      });
+      if (!confirmed) return null;
+    }
+
+    const toastId = notifyLoading("正在根据当前变更生成提交消息...");
+    try {
+      const result = await apiClient.generateCommitMessage(selectedProject);
+      const scopeLabel = result.scope === "staged" ? "暂存区" : "工作区";
+      notifySuccess("已生成提交消息", `依据 ${scopeLabel} ${result.fileCount} 个文件${result.truncated ? "，上下文已截断" : ""}`, toastId);
+      return result.message;
+    } catch (error) {
+      notifyError(errorText(error, "生成提交消息失败。"), undefined, toastId);
+      return null;
+    }
+  }
+
   function applyThemeMode(mode: ThemeMode) {
     window.localStorage.setItem("git-ui-pro-theme", mode);
     setThemeModeState(mode);
     setResolvedTheme(resolveTheme(mode));
   }
 
-  function selectThemeMode(nextTheme: "light" | "dark") {
+  function selectThemeMode(nextTheme: ThemeMode) {
     const previousTheme = uiPreferences.theme;
     applyThemeMode(nextTheme);
     persistUiPreferences({ theme: nextTheme }, () => applyThemeMode(previousTheme));
@@ -2905,6 +3122,47 @@ export function App() {
     void window.gitUI?.runAppCommand(command);
   }
 
+  function openRepositoryCenter(tab: RepositoryCenterTab) {
+    setRepositoryCenterInitialTab(tab);
+    setRepositoryCenterOpen(true);
+  }
+
+  function handleMenuCommand(command: MenuCommand) {
+    switch (command) {
+      case "preferences:open":
+        openRepositoryCenter("preferences");
+        return;
+      case "repository:open-local":
+        void handleAddProject();
+        return;
+      case "repository:clone":
+        setRepositoryCenterInitialTab("projects");
+        setRepositoryCenterCloneFocusRequest((request) => request + 1);
+        setRepositoryCenterOpen(true);
+        return;
+      case "repository:center":
+        openRepositoryCenter(selectedProject ? "recovery" : "projects");
+        return;
+      case "sidebar:toggle":
+        setLeftCollapsed((collapsed) => !collapsed);
+        return;
+      case "console:toggle":
+        setConsoleVisibility(!consoleOpen);
+        return;
+      case "theme:system":
+        selectThemeMode("system");
+        return;
+      case "theme:light":
+        selectThemeMode("light");
+        return;
+      case "theme:dark":
+        selectThemeMode("dark");
+        return;
+    }
+  }
+
+  menuCommandHandlerRef.current = handleMenuCommand;
+
   function getMaxConsoleHeight(): number {
     const stackHeight = detailStackRef.current?.clientHeight ?? window.innerHeight;
     return Math.max(MIN_CONSOLE_HEIGHT, stackHeight - 10);
@@ -2933,10 +3191,12 @@ export function App() {
     const startX = event.clientX;
     const startY = event.clientY;
     const startSidebarWidth = sidebarWidth;
+    const startBranchRailWidth = branchRailWidth;
     const startDetailWidth = detailWidth;
     const startSourcePaneHeight = sourcePaneHeight;
     const startConsoleHeight = consoleHeight;
     let finalSidebarWidth = startSidebarWidth;
+    let finalBranchRailWidth = startBranchRailWidth;
     let finalDetailWidth = startDetailWidth;
     let finalConsoleHeight = startConsoleHeight;
 
@@ -2945,6 +3205,12 @@ export function App() {
         const delta = uiPreferences.sidebarPosition === "right" ? startX - moveEvent.clientX : moveEvent.clientX - startX;
         finalSidebarWidth = clamp(startSidebarWidth + delta, 180, 420);
         setSidebarWidth(finalSidebarWidth);
+      }
+
+      if (target === "branches") {
+        const delta = uiPreferences.sidebarPosition === "right" ? startX - moveEvent.clientX : moveEvent.clientX - startX;
+        finalBranchRailWidth = clamp(startBranchRailWidth + delta, 180, 340);
+        setBranchRailWidth(finalBranchRailWidth);
       }
 
       if (target === "detail") {
@@ -2975,7 +3241,7 @@ export function App() {
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      if (!window.gitUI || target === "sourceSplit") {
+      if (!window.gitUI || target === "sourceSplit" || target === "branches") {
         return;
       }
       const update = target === "sidebar"
@@ -2994,11 +3260,12 @@ export function App() {
 
   const layoutStyle = {
     "--sidebar-width": leftCollapsed ? "0px" : `${sidebarWidth}px`,
+    "--branch-width": branchRailCollapsed ? "38px" : `${branchRailWidth}px`,
     "--detail-width": rightCollapsed ? "0px" : `${detailWidth}px`,
     "--scm-pane-height": `${sourcePaneHeight}px`,
     "--console-height": `${consoleHeight}px`,
     "--ui-font-size": `${uiPreferences.fontSize}px`,
-    "--app-font": uiPreferences.fontFamily === "monospace" ? "var(--mono-font)" : uiPreferences.fontFamily
+    "--app-font": uiPreferences.fontFamily.toLowerCase().includes("mono") ? "var(--mono-font)" : "var(--system-font)"
   } as CSSProperties;
   const detailStackStyle = {
     gridTemplateRows: consoleOpen
@@ -3008,18 +3275,20 @@ export function App() {
 
   return (
     <div
-      className={`app-shell theme-${resolvedTheme} density-${uiPreferences.density} sidebar-${uiPreferences.sidebarPosition} ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""} ${
+      className={`app-shell ${desktopPlatformClass(desktopPlatform)} theme-${resolvedTheme} density-${uiPreferences.density} sidebar-${uiPreferences.sidebarPosition} ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""} ${
         consoleOpen ? "console-open" : ""
       }`}
+      data-initial-data-ready={initialDataReady ? "true" : "false"}
       style={layoutStyle}
     >
       <AppChrome
+        platform={desktopPlatform}
         onCommand={runAppCommand}
         sidebarCollapsed={leftCollapsed}
         currentProjectName={selectedProject?.name}
         theme={resolvedTheme}
         onToggleSidebar={() => setLeftCollapsed((collapsed) => !collapsed)}
-        onThemeChange={selectThemeMode}
+        onThemeChange={(theme) => selectThemeMode(theme)}
         onOpenRepositoryCenter={() => {
           setRepositoryCenterInitialTab(selectedProject ? "recovery" : "projects");
           setRepositoryCenterOpen(true);
@@ -3045,6 +3314,18 @@ export function App() {
 
       {!leftCollapsed ? <div className="resize-handle sidebar-resize" onMouseDown={(event) => beginResize("sidebar", event)} /> : null}
 
+      <BranchRail
+        branches={branchRailBranches}
+        loading={branchRailLoading}
+        error={branchRailError}
+        collapsed={branchRailCollapsed}
+        busyAction={branchRailBusyAction}
+        onToggleCollapsed={() => setBranchRailCollapsed((value) => !value)}
+        onRefresh={() => selectedProject ? void loadBranchRail(selectedProject) : undefined}
+        onAction={handleBranchRailAction}
+      />
+      {!branchRailCollapsed ? <div className="resize-handle branch-rail-resize" onMouseDown={(event) => beginResize("branches", event)} /> : null}
+
       <main className="workspace-shell">
         {!selectedProjectGitReady ? (
           <section className="main-grid git-dependency-grid">
@@ -3069,6 +3350,7 @@ export function App() {
             >
               <WorkspaceView
                 project={selectedProject}
+                platform={desktopPlatform}
                 worktree={worktree}
                 onStageFile={handleStageFile}
                 onStageAll={handleStageAll}
@@ -3083,6 +3365,7 @@ export function App() {
                 selectedFilePath={activeWorktreeTab?.file.path}
                 selectedFileStaged={activeWorktreeTab?.file.staged}
                 onCommit={handleCommit}
+                onGenerateCommitMessage={handleGenerateCommitMessage}
                 onAmendLastMessage={openAmendLastCommitDialog}
                 onUndoLastCommit={(mode) => void handleUndoLastCommit(mode)}
                 onSyncChanges={() => (selectedProject ? runSyncOperation(selectedProject) : Promise.resolve())}
@@ -3130,6 +3413,7 @@ export function App() {
                 style={detailStackStyle}
               >
                 <WorktreeDetailPanel
+                  platform={desktopPlatform}
                   tabs={worktreeTabs}
                   activeTabId={activeWorktreeTabId}
                   repositoryPath={selectedProject?.path}
@@ -3148,6 +3432,7 @@ export function App() {
                 <ConsolePanel
                   project={selectedProject}
                   disabledProjectIds={disabledRemoteProjectIds}
+                  platform={desktopPlatform}
                   theme={resolvedTheme}
                   visible={consoleOpen && !selectedRemoteConnectionPaused}
                   maximized={consoleMaximized}
@@ -3191,6 +3476,8 @@ export function App() {
           project={selectedProject}
           projects={projects}
           initialTab={repositoryCenterInitialTab}
+          cloneInputFocusRequest={repositoryCenterCloneFocusRequest}
+          llmFocusRequest={repositoryCenterLlmFocusRequest}
           onClose={() => setRepositoryCenterOpen(false)}
           onOpenProject={(projectId, openedProject) => {
             selectProject(projectId, openedProject);
@@ -3233,6 +3520,9 @@ export function App() {
             onCreateNameChange={(branchName) =>
               setBranchDialog((current) => (current?.mode === "create" ? { ...current, branchName } : current))
             }
+            onRenameNameChange={(branchName) =>
+              setBranchDialog((current) => (current?.mode === "rename" ? { ...current, branchName } : current))
+            }
             onCheckoutChange={(checkout) => setBranchDialog((current) => (current?.mode === "create" ? { ...current, checkout } : current))}
             onBranchQueryChange={(query) =>
               setBranchDialog((current) => (current?.mode === "switch" || current?.mode === "delete" || current?.mode === "merge" ? { ...current, query } : current))
@@ -3241,6 +3531,7 @@ export function App() {
               setBranchDialog((current) => (current?.mode === "merge" ? { ...current, strategy } : current))
             }
             onCreate={submitCreateBranch}
+            onRename={submitRenameBranch}
             onSwitch={submitSwitchBranch}
             onDelete={submitDeleteBranch}
             onMergeTarget={previewMergeTarget}
@@ -3381,10 +3672,12 @@ function BranchDialog({
   busy,
   onClose,
   onCreateNameChange,
+  onRenameNameChange,
   onCheckoutChange,
   onBranchQueryChange,
   onMergeStrategyChange,
   onCreate,
+  onRename,
   onSwitch,
   onDelete,
   onMergeTarget,
@@ -3394,10 +3687,12 @@ function BranchDialog({
   busy: boolean;
   onClose: () => void;
   onCreateNameChange: (value: string) => void;
+  onRenameNameChange: (value: string) => void;
   onCheckoutChange: (value: boolean) => void;
   onBranchQueryChange: (value: string) => void;
   onMergeStrategyChange: (value: GitMergeStrategy) => void;
   onCreate: () => void;
+  onRename: () => void;
   onSwitch: (branch: BranchInfo) => void;
   onDelete: (branch: BranchInfo) => void;
   onMergeTarget: (branch: BranchInfo) => void;
@@ -3418,7 +3713,7 @@ function BranchDialog({
     state.mode === "switch" || state.mode === "delete" || state.mode === "merge"
       ? state.branches.filter((branch) => `${branch.name} ${branch.fullName}`.toLowerCase().includes(state.query.trim().toLowerCase()))
       : [];
-  const dialogTitle = state.mode === "create" ? "新建分支" : state.mode === "switch" ? "切换分支" : state.mode === "delete" ? "删除分支" : "合并分支";
+  const dialogTitle = state.mode === "create" ? "新建分支" : state.mode === "rename" ? "重命名分支" : state.mode === "switch" ? "切换分支" : state.mode === "delete" ? "删除分支" : "合并分支";
 
   return (
     <div className="branch-dialog-backdrop" role="presentation" onMouseDown={onClose}>
@@ -3433,34 +3728,35 @@ function BranchDialog({
           </button>
         </header>
 
-        {state.mode === "create" ? (
+        {state.mode === "create" || state.mode === "rename" ? (
           <form
             className="branch-create-form"
             onSubmit={(event) => {
               event.preventDefault();
-              onCreate();
+              state.mode === "create" ? onCreate() : onRename();
             }}
           >
             <label>
               <span>分支名</span>
-              <input value={state.branchName} autoFocus onChange={(event) => onCreateNameChange(event.target.value)} placeholder="feature/new-branch" disabled={busy} />
+              <input value={state.branchName} autoFocus onChange={(event) => state.mode === "create" ? onCreateNameChange(event.target.value) : onRenameNameChange(event.target.value)} placeholder="feature/new-branch" disabled={busy} />
             </label>
-            {state.startLabel ? (
+            {state.mode === "create" && state.startLabel ? (
               <div className="branch-start-point">
                 基于提交 <code>{state.startLabel}</code>
               </div>
             ) : null}
-            <label className="branch-checkbox-row">
+            {state.mode === "rename" ? <div className="branch-start-point">原分支 <code>{state.branch.name}</code></div> : null}
+            {state.mode === "create" ? <label className="branch-checkbox-row">
               <input type="checkbox" checked={state.checkout} onChange={(event) => onCheckoutChange(event.target.checked)} disabled={busy} />
               创建后切换到该分支
-            </label>
+            </label> : null}
             <div className="branch-dialog-actions">
               <button type="button" className="text-button" onClick={onClose} disabled={busy}>
                 取消
               </button>
-              <button type="submit" className="primary-action branch-primary-action" disabled={busy || !state.branchName.trim()}>
+              <button type="submit" className="primary-action branch-primary-action" disabled={busy || !state.branchName.trim() || (state.mode === "rename" && state.branchName.trim() === state.branch.name)}>
                 <Check size={14} />
-                创建
+                {state.mode === "create" ? "创建" : "重命名"}
               </button>
             </div>
           </form>
@@ -3849,46 +4145,6 @@ function isEditableShortcutTarget(target: EventTarget | null): boolean {
   return target.isContentEditable || Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
 }
 
-function matchesShortcut(event: globalThis.KeyboardEvent, shortcut: string): boolean {
-  const parsed = parseShortcut(shortcut);
-  if (!parsed) {
-    return false;
-  }
-  if (
-    event.ctrlKey !== parsed.ctrl ||
-    event.altKey !== parsed.alt ||
-    event.shiftKey !== parsed.shift ||
-    event.metaKey !== parsed.meta
-  ) {
-    return false;
-  }
-  const normalizedKey = event.key.toLowerCase() === " " ? "space" : event.key.toLowerCase();
-  return normalizedKey === parsed.key || event.code.toLowerCase() === parsed.key;
-}
-
-function parseShortcut(shortcut: string): { ctrl: boolean; alt: boolean; shift: boolean; meta: boolean; key: string } | null {
-  const aliases: Record<string, "ctrl" | "alt" | "shift" | "meta"> = {
-    ctrl: "ctrl", control: "ctrl", alt: "alt", option: "alt", shift: "shift", meta: "meta", cmd: "meta", command: "meta"
-  };
-  const modifiers = new Set<"ctrl" | "alt" | "shift" | "meta">();
-  const mainKeys: string[] = [];
-  for (const token of shortcut.split("+").map((value) => value.trim().toLowerCase()).filter(Boolean)) {
-    const modifier = aliases[token];
-    if (modifier) modifiers.add(modifier);
-    else mainKeys.push(token);
-  }
-  if (mainKeys.length !== 1) {
-    return null;
-  }
-  return {
-    ctrl: modifiers.has("ctrl"),
-    alt: modifiers.has("alt"),
-    shift: modifiers.has("shift"),
-    meta: modifiers.has("meta"),
-    key: mainKeys[0]
-  };
-}
-
 function remoteProjectAddress(project: GitProject): string | undefined {
   if (!project.remote) {
     return undefined;
@@ -3926,7 +4182,7 @@ function upsertWorktreeTab(tabs: WorktreeEditorTab[], incomingTab: WorktreeEdito
 
 function readThemeMode(): ThemeMode {
   const saved = window.localStorage.getItem("git-ui-pro-theme");
-  return saved === "dark" ? "dark" : "light";
+  return saved === "dark" || saved === "light" || saved === "system" ? saved : "system";
 }
 
 function resolveTheme(mode: ThemeMode): "light" | "dark" {

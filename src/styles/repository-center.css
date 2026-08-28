@@ -929,6 +929,84 @@
   opacity: 0.62;
 }
 
+.repository-center-llm-status {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.repository-center-llm-status[data-configured="true"] > svg {
+  color: var(--success);
+}
+
+.repository-center-llm-status > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.repository-center-llm-status strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.repository-center-llm-status small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.repository-center-llm-form {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.6fr) minmax(180px, 1fr);
+  gap: 12px;
+  padding: 14px 10px 10px;
+}
+
+.repository-center-llm-api-key {
+  grid-column: 1 / -1;
+}
+
+.repository-center-llm-warning {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 10px 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--warning) 72%, var(--text));
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.repository-center-llm-warning > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.repository-center-llm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 0 10px 12px;
+}
+
+@media (max-width: 720px) {
+  .repository-center-llm-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .repository-center-llm-api-key {
+    grid-column: 1;
+  }
+}
+
 .repository-center-check,
 .repository-center-switch {
   display: inline-flex;
