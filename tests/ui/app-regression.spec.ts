@@ -1588,6 +1588,13 @@ test("长文件对比使用整文件宽度并保持虚拟滚动高度稳定", as
   await expect(diffPanel).toBeVisible();
   await expect(horizontalScroll).toBeVisible();
   await expect(minimap).toBeVisible();
+  const [minimapBounds, firstDiffCellBounds] = await Promise.all([
+    minimap.boundingBox(),
+    diffPanel.locator(".split-diff-cell").first().boundingBox()
+  ]);
+  expect(minimapBounds).not.toBeNull();
+  expect(firstDiffCellBounds).not.toBeNull();
+  expect(minimapBounds!.x + minimapBounds!.width).toBeLessThanOrEqual(firstDiffCellBounds!.x);
   await expect(diffPanel.locator(".split-diff-cell.new .line-number").filter({ hasText: /^101$/ })).toBeVisible();
   const initialMetrics = await diffPanel.evaluate((panel) => ({
     scrollHeight: panel.scrollHeight,
