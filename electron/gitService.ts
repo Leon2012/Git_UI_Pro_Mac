@@ -549,6 +549,44 @@ function decodeGitOutput(buffer: Buffer): string {
   }
 }
 
+function terminateProcessTree(child: ReturnType<typeof spawn>): boolean {
+  const processId = child.pid;
+  if (!processId || child.exitCode !== null || child.signalCode !== null) {
+    return false;
+  }
+
+  if (process.platform === "win32") {
+    const killer = spawn("taskkill", ["/pid", String(processId), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    killer.once("error", () => child.kill());
+    killer.once("close", (code) => {
+      if (code !== 0 && child.exitCode === null && child.signalCode === null) {
+        child.kill();
+      }
+    });
+    killer.unref();
+    return true;
+  }
+
+  try {
+    process.kill(-processId, "SIGTERM");
+  } catch {
+    return child.kill("SIGTERM");
+  }
+
+  const forceKillTimer = setTimeout(() => {
+    try {
+      process.kill(-processId, "SIGKILL");
+    } catch {
+      // The process group already exited after SIGTERM.
+    }
+  }, 1_500);
+  forceKillTimer.unref();
+  return true;
+}
+
 export class GitService {
   private readonly activeMergeRepositories = new Set<string>();
   private readonly pendingStatusRequests = new Map<string, Promise<GitStatusSummary>>();
@@ -571,8 +609,11 @@ export class GitService {
     }
     active.cancelled = true;
     active.context.onProgress(operationProgress(active.context, "cancelling", "正在取消"));
-    active.child.kill();
-    return true;
+    const terminationStarted = terminateProcessTree(active.child);
+    if (!terminationStarted) {
+      active.cancelled = false;
+    }
+    return terminationStarted;
   }
 
   cancelReadRequest(requestId: string): boolean {
@@ -581,8 +622,11 @@ export class GitService {
       return false;
     }
     active.cancelled = true;
-    active.child.kill();
-    return true;
+    const terminationStarted = terminateProcessTree(active.child);
+    if (!terminationStarted) {
+      active.cancelled = false;
+    }
+    return terminationStarted;
   }
 
   async run(cwd: RepositoryLocation, args: string[], options: GitRunOptions = {}): Promise<GitOperationResult> {
@@ -624,7 +668,8 @@ export class GitService {
         cwd: target.remote ? process.cwd() : target.path,
         env: createGitEnv(),
         shell: false,
-        windowsHide: true
+        windowsHide: true,
+        detached: process.platform !== "win32" && Boolean(options.operation || options.readRequestId || timeoutMs)
       });
       if (options.readRequestId) {
         this.activeReadRequests.set(options.readRequestId, { child, cancelled: false });
@@ -666,7 +711,7 @@ export class GitService {
             const timeoutText = `Git command timed out after ${Math.round(timeoutMs / 1000)}s.`;
             const stderrText = decodeGitOutput(Buffer.concat(stderrChunks));
             const stderr = stderrText ? `${stderrText}\n${timeoutText}` : timeoutText;
-            child.kill();
+            terminateProcessTree(child);
             finish({
               ok: false,
               command,

@@ -10,6 +10,7 @@ const macWorkflow = await readFile(
   path.join(rootDir, ".github", "workflows", "build-macos-installer.yml"),
   "utf8",
 );
+const makefile = await readFile(path.join(rootDir, "Makefile"), "utf8");
 
 test("macOS package targets arm64 only", () => {
   assert.deepEqual(packageJson.build.mac.target, [
@@ -27,6 +28,12 @@ test("macOS workflow is labeled and uploaded as arm64", () => {
   assert.match(macWorkflow, /run: npm run verify:macos/);
   assert.match(macWorkflow, /name: git-ui-pro-macos-arm64/);
   assert.match(macWorkflow, /npm run dist:mac -- --publish never/);
+});
+
+test("local macOS install builds only the unpacked app", () => {
+  const installTarget = makefile.match(/^install:\n([\s\S]*?)\n\ndev:/m)?.[1];
+  assert.ok(installTarget, "Makefile 必须包含 install 目标");
+  assert.match(installTarget, /\$\(NPM\) run dist:mac -- --dir\b/);
 });
 
 test("macOS build guard rejects non-arm64 hosts", () => {

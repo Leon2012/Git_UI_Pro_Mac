@@ -53,7 +53,7 @@ install:
 	app_path="$$output_dir/mac-arm64/Git UI Pro.app"; \
 	target_path="/Applications/Git UI Pro.app"; \
 	printf '%s\n' "[macos-install] identity=$$identity" "[macos-install] output=$$output_dir"; \
-	$(NPM) run dist:mac -- --config.directories.output="$$output_dir" --config.mac.identity="$$identity" --publish never; \
+	$(NPM) run dist:mac -- --dir --config.directories.output="$$output_dir" --config.mac.identity="$$identity" --publish never; \
 	test -d "$$app_path"; \
 	codesign --verify --deep --strict --verbose=2 "$$app_path"; \
 	ditto "$$app_path" "$$staging_dir/Git UI Pro.app"; \

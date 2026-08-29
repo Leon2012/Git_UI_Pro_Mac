@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -36,6 +36,47 @@ function assertSuccess(result) {
   assert.equal(result.ok, true, result.messageZh ?? result.stderr);
 }
 
+function isProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProcessExit(pid, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return !isProcessRunning(pid);
+}
+
+function readFirstOutputLine(stream) {
+  return new Promise((resolve, reject) => {
+    let output = "";
+    const timeout = setTimeout(() => reject(new Error("Timed out waiting for child process output.")), 2_000);
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk) => {
+      output += chunk;
+      const newlineIndex = output.indexOf("\n");
+      if (newlineIndex < 0) {
+        return;
+      }
+      clearTimeout(timeout);
+      resolve(output.slice(0, newlineIndex));
+    });
+    stream.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
 test("file diffs include whole-file context and preserve patch-like source lines", async () => {
   const repositoryPath = await createRepository("full-file-diff");
   const service = new GitService();
@@ -64,12 +105,47 @@ test("file diffs include whole-file context and preserve patch-like source lines
   assert.equal(commitDiff.find((line) => line.type === "add")?.content, "++ changed marker");
 });
 
-test("long Git operations expose an explicit cancelling state and reject unknown task ids", () => {
+test("cancelling a long Git operation terminates its network helper process tree", async (t) => {
   const service = new GitService();
   const progress = [];
-  let killed = false;
+  const parent = spawn(process.execPath, [
+    "-e",
+    [
+      "const { spawn } = require('node:child_process');",
+      "const helper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], { stdio: 'ignore' });",
+      "process.stdout.write(String(helper.pid) + '\\n');",
+      "setInterval(() => {}, 1_000);"
+    ].join("\n")
+  ], {
+    detached: process.platform !== "win32",
+    stdio: ["ignore", "pipe", "ignore"],
+    windowsHide: true
+  });
+  const helperPid = Number(await readFirstOutputLine(parent.stdout));
+  assert.equal(Number.isInteger(helperPid), true);
+  t.after(() => {
+    if (isProcessRunning(helperPid)) {
+      try {
+        process.kill(helperPid, "SIGKILL");
+      } catch {
+        // The process may have exited between the probe and cleanup.
+      }
+    }
+    if (parent.exitCode === null) {
+      try {
+        if (process.platform === "win32" || !parent.pid) {
+          parent.kill("SIGKILL");
+        } else {
+          process.kill(-parent.pid, "SIGKILL");
+        }
+      } catch {
+        parent.kill("SIGKILL");
+      }
+    }
+  });
+
   service.activeLongOperations.set("operation-123456", {
-    child: { kill: () => { killed = true; } },
+    child: parent,
     context: {
       id: "operation-123456",
       kind: "fetch",
@@ -81,10 +157,10 @@ test("long Git operations expose an explicit cancelling state and reject unknown
   });
 
   assert.equal(service.cancelLongOperation("operation-123456"), true);
-  assert.equal(killed, true);
   assert.equal(service.activeLongOperations.get("operation-123456").cancelled, true);
   assert.equal(progress.at(-1).phase, "cancelling");
   assert.equal(progress.at(-1).message, "正在取消");
+  assert.equal(await waitForProcessExit(helperPid), true, "Git 网络辅助进程应随取消操作一起退出");
   assert.equal(service.cancelLongOperation("missing-operation"), false);
 });
 
