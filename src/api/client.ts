@@ -667,11 +667,62 @@ export const apiClient = {
         headHash: mockCommits[2]?.hash ?? ""
       },
       {
+        name: "feature/ui/menu-contrast",
+        fullName: "refs/heads/feature/ui/menu-contrast",
+        type: "local",
+        current: false,
+        headHash: mockCommits[1]?.hash ?? ""
+      },
+      {
+        name: "origin/feature/menu-contrast",
+        fullName: "refs/heads/origin/feature/menu-contrast",
+        type: "local",
+        current: false,
+        headHash: mockCommits[1]?.hash ?? ""
+      },
+      {
+        name: "feature/this-is-a-very-long-folder-name/this-is-a-very-long-branch-name-that-must-truncate",
+        fullName: "refs/heads/feature/this-is-a-very-long-folder-name/this-is-a-very-long-branch-name-that-must-truncate",
+        type: "local",
+        current: false,
+        headHash: mockCommits[1]?.hash ?? ""
+      },
+      {
+        name: "feature/1u4l0kuqet/leaf",
+        fullName: "refs/heads/feature/1u4l0kuqet/leaf",
+        type: "local",
+        current: false,
+        headHash: mockCommits[1]?.hash ?? ""
+      },
+      {
+        name: "feature/1g59h76y6h/leaf",
+        fullName: "refs/heads/feature/1g59h76y6h/leaf",
+        type: "local",
+        current: false,
+        headHash: mockCommits[1]?.hash ?? ""
+      },
+      {
+        name: "deep/a/b/c/d/e/f/g/h/i/j/k/leaf",
+        fullName: "refs/heads/deep/a/b/c/d/e/f/g/h/i/j/k/leaf",
+        type: "local",
+        current: false,
+        ahead: 12,
+        behind: 34,
+        headHash: mockCommits[1]?.hash ?? ""
+      },
+      {
         name: "origin/master",
         fullName: "refs/remotes/origin/master",
         type: "remote",
         current: false,
         headHash: mockCommits[0]?.hash ?? ""
+      },
+      {
+        name: "origin/feature/menu-contrast",
+        fullName: "refs/remotes/origin/feature/menu-contrast",
+        type: "remote",
+        current: false,
+        headHash: mockCommits[1]?.hash ?? ""
       }
     ];
   },

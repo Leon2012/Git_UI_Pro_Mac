@@ -9930,6 +9930,70 @@ code,
   gap: 1px;
 }
 
+.branch-path-folder,
+.branch-path-children {
+  min-width: 0;
+}
+
+.branch-path-children {
+  display: grid;
+  gap: 1px;
+}
+
+.branch-path-folder-toggle {
+  display: grid;
+  grid-template-columns: 12px 14px minmax(0, 1fr) 18px;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+  height: 28px;
+  min-width: 0;
+  border-radius: 5px;
+  padding: 0 5px 0 calc(5px + var(--branch-depth, 0) * 14px);
+  color: var(--muted);
+  background: transparent;
+  text-align: left;
+}
+
+.branch-path-folder-toggle:hover:not([aria-disabled="true"]) {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.branch-path-folder-toggle[aria-disabled="true"] {
+  cursor: default;
+}
+
+.branch-path-folder-toggle > svg:first-child {
+  transition: transform 120ms ease;
+}
+
+.branch-path-folder-toggle > svg:first-child.collapsed {
+  transform: rotate(-90deg);
+}
+
+.branch-path-folder-toggle > .lucide-folder,
+.branch-path-folder-toggle > .lucide-folder-open {
+  color: var(--blue);
+}
+
+.branch-path-folder-toggle strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-path-folder-toggle small {
+  min-width: 18px;
+  color: var(--muted);
+  font-size: 9px;
+  text-align: right;
+}
+
 .branch-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 26px;
@@ -9956,7 +10020,7 @@ code,
   align-items: center;
   min-width: 0;
   height: 34px;
-  padding: 0 2px 0 7px;
+  padding: 0 2px 0 calc(7px + var(--branch-depth, 0) * 14px);
   color: inherit;
   background: transparent;
   text-align: left;

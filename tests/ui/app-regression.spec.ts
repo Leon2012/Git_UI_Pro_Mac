@@ -216,6 +216,336 @@ test("主界面在项目与更改之间显示独立分支栏", async ({ page }) 
   await expect(rail.locator('[data-branch-name="master"]')).toBeHidden();
 });
 
+test("分支路径树按斜线递归显示本地与远程分支", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+
+  const localFeature = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button');
+  await expect(localFeature).toBeVisible();
+  await expect(localFeature).toHaveAttribute("aria-expanded", "true");
+  await expect(localFeature.locator("small")).toHaveText("5");
+  const localFeatureGroupId = await localFeature.getAttribute("aria-controls");
+  expect(localFeatureGroupId).toBeTruthy();
+  await expect(page.locator(`#${localFeatureGroupId}`)).toHaveAttribute("role", "group");
+  await expect(page.locator(`#${localFeatureGroupId}`)).toHaveAttribute("aria-label", "本地分支 feature 子级");
+
+  const localUi = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature/ui"] > button');
+  await expect(localUi).toBeVisible();
+  await expect(localUi).toHaveAttribute("aria-expanded", "true");
+  const localLeaf = rail.locator('[data-branch-name="feature/ui/menu-contrast"]');
+  await expect(localLeaf).toBeVisible();
+  await expect(localLeaf.locator("strong")).toHaveText("menu-contrast");
+  await expect(localLeaf.locator(".branch-row-main")).toHaveAccessibleName("feature/ui/menu-contrast，本地分支");
+
+  const remoteOrigin = rail.locator('.branch-path-folder[data-branch-scope="remote"][data-branch-path="origin"] > button');
+  const remoteFeature = rail.locator('.branch-path-folder[data-branch-scope="remote"][data-branch-path="origin/feature"] > button');
+  await expect(remoteOrigin).toHaveAttribute("aria-expanded", "true");
+  await expect(remoteOrigin.locator("small")).toHaveText("2");
+  await expect(remoteFeature).toHaveAttribute("aria-expanded", "true");
+  const remoteLeaf = rail.locator('[data-branch-name="origin/feature/menu-contrast"][data-branch-type="remote"]');
+  await expect(remoteLeaf).toBeVisible();
+  await expect(remoteLeaf.locator("strong")).toHaveText("menu-contrast");
+  await expect(remoteLeaf.locator(".branch-row-main")).toHaveAccessibleName("origin/feature/menu-contrast，远程分支");
+
+  const localSection = rail.getByRole("heading", { name: "本地分支" }).locator("../..");
+  const topLevelOrder = await localSection.locator(":scope > .branch-group-items > .branch-row, :scope > .branch-group-items > .branch-path-folder").evaluateAll((elements) => elements.map((element) => element.getAttribute("data-branch-name") ?? element.getAttribute("data-branch-path")));
+  expect(topLevelOrder.slice(0, 4)).toEqual(["master", "feature", "origin", "deep"]);
+});
+
+test("分支路径树的本地与远程折叠状态相互隔离且保留键盘焦点", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+  const localOrigin = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="origin"] > button');
+  const remoteOrigin = rail.locator('.branch-path-folder[data-branch-scope="remote"][data-branch-path="origin"] > button');
+
+  await localOrigin.focus();
+  await page.keyboard.press("Space");
+  await expect(localOrigin).toBeFocused();
+  await expect(localOrigin).toHaveAttribute("aria-expanded", "false");
+  await expect(remoteOrigin).toHaveAttribute("aria-expanded", "true");
+  await expect(rail.locator('[data-branch-name="origin/feature/menu-contrast"][data-branch-type="remote"]')).toBeVisible();
+
+  await page.keyboard.press("Enter");
+  await expect(localOrigin).toBeFocused();
+  await expect(localOrigin).toHaveAttribute("aria-expanded", "true");
+});
+
+test("分支路径树为合法碰撞路径生成唯一控制 ID", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+  const first = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature/1u4l0kuqet"] > button');
+  const second = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature/1g59h76y6h"] > button');
+  const firstId = await first.getAttribute("aria-controls");
+  const secondId = await second.getAttribute("aria-controls");
+  expect(firstId).toBeTruthy();
+  expect(secondId).toBeTruthy();
+  expect(firstId).not.toBe(secondId);
+  await expect(page.locator(`[id="${firstId}"]`)).toHaveCount(1);
+  await expect(page.locator(`[id="${secondId}"]`)).toHaveCount(1);
+});
+
+test("分支路径树使用 Finder 式层级和稳定尺寸", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+  const feature = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button');
+  const ui = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature/ui"] > button');
+  const longFolder = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature/this-is-a-very-long-folder-name"] > button');
+  const longLeaf = rail.locator('[data-branch-name="feature/this-is-a-very-long-folder-name/this-is-a-very-long-branch-name-that-must-truncate"]');
+
+  const styles = await feature.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const icon = element.querySelector<SVGElement>(".lucide-folder-open, .lucide-folder");
+    const count = element.querySelector<HTMLElement>("small");
+    return {
+      height: style.height,
+      iconColor: icon ? getComputedStyle(icon).color : "missing",
+      countMinWidth: count ? getComputedStyle(count).minWidth : "missing"
+    };
+  });
+  expect(styles).toEqual({ height: "28px", iconColor: "rgb(10, 132, 255)", countMinWidth: "18px" });
+
+  const featureLabel = await feature.locator("strong").boundingBox();
+  const uiLabel = await ui.locator("strong").boundingBox();
+  expect(featureLabel).not.toBeNull();
+  expect(uiLabel).not.toBeNull();
+  expect(Math.round(uiLabel!.x - featureLabel!.x)).toBe(14);
+
+  const longFolderGeometry = await longFolder.evaluate((element) => {
+    const label = element.querySelector<HTMLElement>("strong")!;
+    const count = element.querySelector<HTMLElement>("small")!;
+    return { labelRight: label.getBoundingClientRect().right, countLeft: count.getBoundingClientRect().left, truncated: label.scrollWidth > label.clientWidth };
+  });
+  expect(longFolderGeometry.truncated).toBe(true);
+  expect(longFolderGeometry.labelRight).toBeLessThanOrEqual(longFolderGeometry.countLeft - 4);
+
+  const longLeafGeometry = await longLeaf.evaluate((element) => {
+    const label = element.querySelector<HTMLElement>("strong")!;
+    const menu = element.querySelector<HTMLElement>(".branch-row-menu")!;
+    return { labelRight: label.getBoundingClientRect().right, menuLeft: menu.getBoundingClientRect().left, truncated: label.scrollWidth > label.clientWidth };
+  });
+  expect(longLeafGeometry.truncated).toBe(true);
+  expect(longLeafGeometry.labelRight).toBeLessThanOrEqual(longLeafGeometry.menuLeft - 4);
+
+  await page.locator(".app-shell").evaluate((element) => {
+    (element as HTMLElement).style.setProperty("--branch-width", "180px");
+  });
+  const deepRootLabel = await rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="deep"] > button > strong').boundingBox();
+  const deepFolderLabel = await rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="deep/a/b/c/d/e/f/g/h/i/j/k"] > button > strong').boundingBox();
+  const deepLeafWidth = await rail.locator('[data-branch-name="deep/a/b/c/d/e/f/g/h/i/j/k/leaf"] strong').evaluate((element) => element.clientWidth);
+  expect(deepRootLabel).not.toBeNull();
+  expect(deepFolderLabel).not.toBeNull();
+  expect(Math.round(deepFolderLabel!.x - deepRootLabel!.x)).toBe(42);
+  expect(deepLeafWidth).toBeGreaterThanOrEqual(24);
+});
+
+test("分支树搜索临时展开顶层组和路径并在清空后恢复折叠", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+  const localGroupToggle = rail.getByRole("heading", { name: "本地分支" }).locator("..");
+  const localFeature = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button');
+
+  await localFeature.click();
+  await expect(localFeature).toHaveAttribute("aria-expanded", "false");
+  await localGroupToggle.click();
+  await expect(localGroupToggle).toHaveAttribute("aria-expanded", "false");
+
+  const search = rail.getByRole("searchbox", { name: "搜索分支" });
+  await search.fill("feature/ui/menu-contrast");
+  await expect(localGroupToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(localGroupToggle).toHaveAttribute("aria-disabled", "true");
+  await expect(localFeature).toHaveAttribute("aria-expanded", "true");
+  await expect(localFeature).toHaveAttribute("aria-disabled", "true");
+  await expect(rail.locator('[data-branch-name="feature/ui/menu-contrast"]')).toBeVisible();
+  await localFeature.click({ force: true });
+
+  await search.fill("");
+  await expect(localGroupToggle).toHaveAttribute("aria-expanded", "false");
+  await localGroupToggle.click();
+  await expect(localFeature).toHaveAttribute("aria-expanded", "false");
+});
+
+test("分支树项目切换会重置搜索选择和折叠状态", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+  const search = rail.getByRole("searchbox", { name: "搜索分支" });
+  const localGroupToggle = rail.getByRole("heading", { name: "本地分支" }).locator("..");
+  await rail.locator('[data-branch-name="feature/ui/menu-contrast"]').click();
+  await rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button').click();
+  await localGroupToggle.click();
+  await search.fill("menu-contrast");
+
+  await page.getByText("Order Platform", { exact: true }).click();
+  await expect(search).toHaveValue("");
+  await expect(rail.getByRole("heading", { name: "本地分支" }).locator("..")).toHaveAttribute("aria-expanded", "true");
+  await expect(rail.locator('[data-branch-name="release/2.4"]')).not.toHaveClass(/selected/);
+
+  await page.getByText("Git UI Pro", { exact: true }).click();
+  await expect(search).toHaveValue("");
+  await expect(localGroupToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button')).toHaveAttribute("aria-expanded", "true");
+  await expect(rail.locator('[data-branch-name="feature/ui/menu-contrast"]')).not.toHaveClass(/selected/);
+});
+
+test("分支树操作保留完整名称和远程分解参数", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & { __branchActionCalls?: Array<{ method: string; args: unknown[] }> };
+    testWindow.__branchActionCalls = [];
+    const record = (method: string) => async (...args: unknown[]) => {
+      testWindow.__branchActionCalls?.push({ method, args });
+      return { ok: false, command: `test:${method}`, stdout: "", stderr: "intentional test stop", exitCode: 1 };
+    };
+    window.gitUI = {
+      ...window.gitUI,
+      platform: "macos",
+      onGitOperationProgress: () => () => undefined,
+      getWindowState: async () => ({ isMaximized: false, isFullScreen: false }),
+      onWindowStateChange: () => () => undefined,
+      onTerminalData: () => () => undefined,
+      onTerminalExit: () => () => undefined,
+      setNativeTheme: async () => undefined,
+      getTerminalHistory: async () => [],
+      getGitVersion: async () => ({ ok: true, command: "git --version", stdout: "git version 2.50.0", stderr: "", exitCode: 0 }),
+      getProjectStatus: async () => ({
+        currentBranch: "master", upstream: "origin/master", ahead: 1, behind: 0, stagedCount: 0,
+        unstagedCount: 1, untrackedCount: 3, conflictedCount: 0, hasConflicts: false
+      }),
+      getBranches: async () => [
+        { name: "master", fullName: "refs/heads/master", type: "local", current: true, upstream: "origin/master", headHash: "a70f6d55" },
+        { name: "feature/project-scan", fullName: "refs/heads/feature/project-scan", type: "local", current: false, headHash: "29d30d1c" },
+        { name: "feature/ui/menu-contrast", fullName: "refs/heads/feature/ui/menu-contrast", type: "local", current: false, headHash: "b13c48e6" },
+        { name: "origin/feature/menu-contrast", fullName: "refs/heads/origin/feature/menu-contrast", type: "local", current: false, headHash: "b13c48e6" },
+        { name: "origin/master", fullName: "refs/remotes/origin/master", type: "remote", current: false, headHash: "a70f6d55" },
+        { name: "origin/feature/menu-contrast", fullName: "refs/remotes/origin/feature/menu-contrast", type: "remote", current: false, headHash: "b13c48e6" }
+      ],
+      getRemotes: async () => [{
+        name: "origin", fetchUrls: ["https://example.com/repository.git"], pushUrls: ["https://example.com/repository.git"],
+        explicitPushUrls: [], defaultBranch: "master", defaultFetch: true, defaultPush: true
+      }],
+      switchBranch: record("switchBranch"),
+      mergeIntoCurrentBranch: record("mergeIntoCurrentBranch"),
+      startRebase: record("startRebase"),
+      renameBranch: record("renameBranch"),
+      deleteBranch: record("deleteBranch"),
+      fetchRemote: record("fetchRemote"),
+      deleteRemoteBranch: record("deleteRemoteBranch")
+    } as unknown as typeof window.gitUI;
+  });
+
+  const rail = page.getByRole("complementary", { name: "分支" });
+  const localRow = rail.locator('[data-branch-name="feature/ui/menu-contrast"][data-branch-type="local"]');
+  const localMenuTrigger = localRow.getByRole("button", { name: "feature/ui/menu-contrast 分支操作" });
+
+  await localRow.getByRole("button").first().dblclick();
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { __branchActionCalls?: unknown[] }).__branchActionCalls?.length ?? 0)).toBe(1);
+
+  await localMenuTrigger.click();
+  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "合并到当前分支" }).click();
+  await page.getByRole("button", { name: "开始合并" }).click();
+
+  await localMenuTrigger.click();
+  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "变基到此分支" }).click();
+  await page.getByRole("button", { name: "开始变基" }).click();
+
+  await localMenuTrigger.click();
+  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "重命名" }).click();
+  const renameDialog = page.getByRole("dialog", { name: "重命名分支" });
+  await renameDialog.getByLabel("分支名").fill("feature/ui/menu-contrast-renamed");
+  await renameDialog.getByRole("button", { name: "重命名" }).click();
+  await renameDialog.getByTitle("关闭").click();
+
+  await localMenuTrigger.click();
+  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "删除本地分支" }).click();
+  await page.getByRole("button", { name: "确认删除" }).click();
+
+  const remoteRow = rail.locator('[data-branch-name="origin/feature/menu-contrast"][data-branch-type="remote"]');
+  const remoteMenuTrigger = remoteRow.getByRole("button", { name: "origin/feature/menu-contrast 分支操作" });
+  await remoteMenuTrigger.click();
+  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "创建跟踪分支" }).click();
+
+  await remoteMenuTrigger.click();
+  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "获取 origin" }).click();
+
+  await remoteMenuTrigger.click();
+  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "删除远程分支" }).click();
+  await page.getByRole("button", { name: "确认删除" }).click();
+
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { __branchActionCalls?: unknown[] }).__branchActionCalls?.length ?? 0)).toBe(8);
+  const calls = await page.evaluate(() => (window as typeof window & {
+    __branchActionCalls?: Array<{ method: string; args: unknown[] }>;
+  }).__branchActionCalls ?? []);
+  const byMethod = (method: string) => calls.filter((call) => call.method === method);
+
+  expect(byMethod("switchBranch")[0].args[1]).toMatchObject({ name: "feature/ui/menu-contrast", type: "local" });
+  expect(byMethod("mergeIntoCurrentBranch")[0].args.slice(1)).toEqual(["feature/ui/menu-contrast", "ff"]);
+  expect(byMethod("startRebase")[0].args[1]).toBe("feature/ui/menu-contrast");
+  expect(byMethod("renameBranch")[0].args.slice(1)).toEqual(["feature/ui/menu-contrast", "feature/ui/menu-contrast-renamed", false]);
+  expect(byMethod("deleteBranch")[0].args.slice(1)).toEqual(["feature/ui/menu-contrast", false]);
+  expect(byMethod("switchBranch")[1].args[1]).toMatchObject({ name: "origin/feature/menu-contrast", type: "remote" });
+  expect(byMethod("fetchRemote")[0].args.slice(1, 3)).toEqual(["origin", true]);
+  expect(byMethod("deleteRemoteBranch")[0].args.slice(1)).toEqual(["origin", "feature/menu-contrast"]);
+});
+
+test("分支树当前多级分支保留获取拉取推送和新建调用语义", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  await page.getByText("Order Platform", { exact: true }).click();
+  const rail = page.getByRole("complementary", { name: "分支" });
+  await expect(rail.locator('[data-branch-name="release/2.4"]')).toBeVisible();
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & { __currentBranchCalls?: Array<{ method: string; args: unknown[] }> };
+    testWindow.__currentBranchCalls = [];
+    const record = (method: string) => async (...args: unknown[]) => {
+      testWindow.__currentBranchCalls?.push({ method, args });
+      return { ok: false, command: `test:${method}`, stdout: "", stderr: "intentional test stop", exitCode: 1 };
+    };
+    window.gitUI = {
+      ...window.gitUI,
+      platform: "macos",
+      onGitOperationProgress: () => () => undefined,
+      getWindowState: async () => ({ isMaximized: false, isFullScreen: false }),
+      onWindowStateChange: () => () => undefined,
+      onTerminalData: () => () => undefined,
+      onTerminalExit: () => () => undefined,
+      setNativeTheme: async () => undefined,
+      fetch: record("fetch"),
+      pull: record("pull"),
+      push: record("push"),
+      createBranch: record("createBranch")
+    } as unknown as typeof window.gitUI;
+  });
+
+  const trigger = rail.getByRole("button", { name: "release/2.4 分支操作" });
+  for (const action of ["获取", "拉取", "推送"] as const) {
+    await trigger.click();
+    await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: action, exact: true }).click();
+  }
+
+  await trigger.click();
+  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "新建分支" }).click();
+  const createDialog = page.getByRole("dialog", { name: "新建分支" });
+  await createDialog.getByLabel("分支名").fill("release/2.5");
+  await createDialog.getByRole("button", { name: "创建" }).click();
+
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { __currentBranchCalls?: unknown[] }).__currentBranchCalls?.length ?? 0)).toBe(4);
+  const calls = await page.evaluate(() => (window as typeof window & {
+    __currentBranchCalls?: Array<{ method: string; args: unknown[] }>;
+  }).__currentBranchCalls ?? []);
+  expect(calls.map((call) => call.method)).toEqual(["fetch", "pull", "push", "createBranch"]);
+  expect(calls[1].args[1]).toBe("ff-only");
+  expect(calls[2].args[1]).toMatchObject({ operationId: expect.any(String) });
+  expect(calls[2].args[1]).not.toHaveProperty("forceWithLease");
+  expect(calls[3].args.slice(1, 3)).toEqual(["release/2.5", true]);
+});
+
 test("分支搜索框只由外层容器绘制边框", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
@@ -303,6 +633,46 @@ test("分支右键菜单按当前、本地和远程分支动态显示操作", as
   await expect(menu.getByRole("menuitem", { name: "获取 origin" })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "合并到当前分支" })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "删除远程分支" })).toBeVisible();
+});
+
+test("macOS 分支菜单高亮使用系统蓝色而不是根主题浅色", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+
+  await rail.locator('[data-branch-name="master"]').click({ button: "right" });
+  const fetchItem = page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "获取" });
+  await fetchItem.hover();
+
+  const styles = await fetchItem.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { background: style.backgroundColor, color: style.color };
+  });
+  expect(styles.background).toBe("rgb(10, 132, 255)");
+  expect(styles.color).toBe("rgb(255, 255, 255)");
+  expect(contrastRatio(styles.color, styles.background)).toBeGreaterThan(3);
+});
+
+test("macOS 分支菜单禁用项悬停时保持灰态", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+
+  await rail.locator('[data-branch-name="master"]').click({ button: "right" });
+  const pullItem = page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "拉取" });
+  await pullItem.evaluate((element) => {
+    (element as HTMLButtonElement).disabled = true;
+  });
+  await expect(pullItem).toBeDisabled();
+  await pullItem.hover({ force: true });
+
+  const styles = await pullItem.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { background: style.backgroundColor, color: style.color, opacity: style.opacity };
+  });
+  expect(styles.background).toBe("rgba(0, 0, 0, 0)");
+  expect(styles.color).toBe("rgb(29, 29, 31)");
+  expect(styles.opacity).toBe("0.45");
 });
 
 test("分支省略号菜单支持键盘导航并在关闭后恢复焦点", async ({ page }) => {

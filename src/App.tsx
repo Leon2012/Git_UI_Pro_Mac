@@ -3315,6 +3315,7 @@ export function App() {
       {!leftCollapsed ? <div className="resize-handle sidebar-resize" onMouseDown={(event) => beginResize("sidebar", event)} /> : null}
 
       <BranchRail
+        key={selectedProject?.id ?? "no-project"}
         branches={branchRailBranches}
         loading={branchRailLoading}
         error={branchRailError}

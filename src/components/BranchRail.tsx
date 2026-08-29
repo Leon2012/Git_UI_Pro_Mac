@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronLeft, ChevronRight, GitBranch, MoreHorizontal, Plus, RefreshCw, Search } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Folder, FolderOpen, GitBranch, MoreHorizontal, Plus, RefreshCw, Search } from "lucide-react";
 import type { BranchInfo, GitRemoteInfo } from "../types/domain";
 import { PathTooltip } from "./PathTooltip";
 
@@ -46,6 +46,77 @@ interface BranchMenuItem {
   label: string;
   danger?: boolean;
   disabled?: boolean;
+}
+
+type BranchPathScope = "local" | "remote";
+
+export interface BranchPathFolder {
+  kind: "folder";
+  key: string;
+  label: string;
+  path: string;
+  branchCount: number;
+  children: BranchPathNode[];
+}
+
+export interface BranchPathLeaf {
+  kind: "branch";
+  key: string;
+  label: string;
+  branch: BranchRailItem;
+}
+
+export type BranchPathNode = BranchPathFolder | BranchPathLeaf;
+
+interface BranchPathBuildLevel {
+  children: BranchPathNode[];
+  folders: Map<string, BranchPathBuildFolder>;
+}
+
+interface BranchPathBuildFolder {
+  node: BranchPathFolder;
+  level: BranchPathBuildLevel;
+}
+
+export function buildBranchPathTree(branches: BranchRailItem[], scope: BranchPathScope): BranchPathNode[] {
+  const root: BranchPathBuildLevel = { children: [], folders: new Map() };
+  for (const branch of branches) {
+    const segments = branch.name.split("/").filter(Boolean);
+    if (segments.length === 0) {
+      root.children.push({ kind: "branch", key: `${scope}:branch:${branch.fullName}`, label: branch.name, branch });
+      continue;
+    }
+
+    let level = root;
+    const path: string[] = [];
+    for (const segment of segments.slice(0, -1)) {
+      path.push(segment);
+      let folder = level.folders.get(segment);
+      if (!folder) {
+        const node: BranchPathFolder = {
+          kind: "folder",
+          key: `${scope}:folder:${path.join("/")}`,
+          label: segment,
+          path: path.join("/"),
+          branchCount: 0,
+          children: []
+        };
+        folder = { node, level: { children: node.children, folders: new Map() } };
+        level.folders.set(segment, folder);
+        level.children.push(node);
+      }
+      folder.node.branchCount += 1;
+      level = folder.level;
+    }
+
+    level.children.push({
+      kind: "branch",
+      key: `${scope}:branch:${branch.fullName}`,
+      label: segments.at(-1) ?? branch.name,
+      branch
+    });
+  }
+  return root.children;
 }
 
 export function resolveBranchRailItems(branches: BranchInfo[], remotes: GitRemoteInfo[]): BranchRailItem[] {
@@ -103,6 +174,7 @@ export function BranchRail({
   const [selectedBranch, setSelectedBranch] = useState("");
   const [localOpen, setLocalOpen] = useState(true);
   const [remoteOpen, setRemoteOpen] = useState(true);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
   const [menu, setMenu] = useState<BranchMenuState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -110,6 +182,19 @@ export function BranchRail({
     || `${branch.name} ${branch.upstream ?? ""}`.toLocaleLowerCase().includes(normalizedQuery)), [branches, normalizedQuery]);
   const localBranches = visibleBranches.filter((branch) => branch.type === "local");
   const remoteBranches = visibleBranches.filter((branch) => branch.type === "remote");
+  const localTree = useMemo(() => buildBranchPathTree(localBranches, "local"), [localBranches]);
+  const remoteTree = useMemo(() => buildBranchPathTree(remoteBranches, "remote"), [remoteBranches]);
+  const searchActive = normalizedQuery.length > 0;
+
+  function toggleFolder(key: string) {
+    if (searchActive) return;
+    setCollapsedFolders((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!menu) return;
@@ -202,11 +287,11 @@ export function BranchRail({
         {error ? <div className="branch-rail-message error"><span>{error}</span><button type="button" onClick={onRefresh}>重试</button></div> : null}
         {!error && loading && branches.length === 0 ? <div className="branch-rail-message">正在读取分支...</div> : null}
         {!error && !loading && branches.length === 0 ? <div className="branch-rail-message">当前仓库没有可显示的分支。</div> : null}
-        <BranchGroup title="本地分支" count={localBranches.length} open={localOpen} onToggle={() => setLocalOpen((value) => !value)}>
-          {localBranches.map((branch) => <BranchRow key={branch.fullName} branch={branch} selected={selectedBranch === branch.fullName} busy={Boolean(busyAction)} onSelect={setSelectedBranch} onOpenMenu={openMenu} onAction={onAction} />)}
+        <BranchGroup title="本地分支" count={localBranches.length} open={searchActive && localBranches.length > 0 ? true : localOpen} toggleDisabled={searchActive} onToggle={() => setLocalOpen((value) => !value)}>
+          <BranchPathTree scope="local" nodes={localTree} depth={0} collapsedFolders={collapsedFolders} forceExpanded={searchActive} selectedBranch={selectedBranch} busy={Boolean(busyAction)} onToggleFolder={toggleFolder} onSelect={setSelectedBranch} onOpenMenu={openMenu} onAction={onAction} />
         </BranchGroup>
-        <BranchGroup title="远程分支" count={remoteBranches.length} open={remoteOpen} onToggle={() => setRemoteOpen((value) => !value)}>
-          {remoteBranches.map((branch) => <BranchRow key={branch.fullName} branch={branch} selected={selectedBranch === branch.fullName} busy={Boolean(busyAction)} onSelect={setSelectedBranch} onOpenMenu={openMenu} onAction={onAction} />)}
+        <BranchGroup title="远程分支" count={remoteBranches.length} open={searchActive && remoteBranches.length > 0 ? true : remoteOpen} toggleDisabled={searchActive} onToggle={() => setRemoteOpen((value) => !value)}>
+          <BranchPathTree scope="remote" nodes={remoteTree} depth={0} collapsedFolders={collapsedFolders} forceExpanded={searchActive} selectedBranch={selectedBranch} busy={Boolean(busyAction)} onToggleFolder={toggleFolder} onSelect={setSelectedBranch} onOpenMenu={openMenu} onAction={onAction} />
         </BranchGroup>
       </div>
       {menu && typeof document !== "undefined" ? createPortal(
@@ -226,14 +311,14 @@ export function BranchRail({
               }}
             >{item.label}</button>
           ))}
-        </div>, document.body) : null}
+        </div>, document.querySelector(".app-shell") ?? document.body) : null}
     </aside>
   );
 }
 
-function BranchGroup({ title, count, open, onToggle, children }: { title: string; count: number; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+function BranchGroup({ title, count, open, toggleDisabled = false, onToggle, children }: { title: string; count: number; open: boolean; toggleDisabled?: boolean; onToggle: () => void; children: React.ReactNode }) {
   return <section className="branch-group">
-    <button type="button" className="branch-group-toggle" aria-expanded={open} onClick={onToggle}>
+    <button type="button" className="branch-group-toggle" aria-expanded={open} aria-disabled={toggleDisabled || undefined} onClick={() => toggleDisabled ? undefined : onToggle()}>
       <ChevronDown size={13} className={open ? "" : "collapsed"} />
       <h3>{title}</h3><small>{count}</small>
     </button>
@@ -241,18 +326,76 @@ function BranchGroup({ title, count, open, onToggle, children }: { title: string
   </section>;
 }
 
-function BranchRow({ branch, selected, busy, onSelect, onOpenMenu, onAction }: {
+function BranchPathTree({ scope, nodes, depth, collapsedFolders, forceExpanded, selectedBranch, busy, onToggleFolder, onSelect, onOpenMenu, onAction }: {
+  scope: BranchPathScope;
+  nodes: BranchPathNode[];
+  depth: number;
+  collapsedFolders: Set<string>;
+  forceExpanded: boolean;
+  selectedBranch: string;
+  busy: boolean;
+  onToggleFolder: (key: string) => void;
+  onSelect: (fullName: string) => void;
+  onOpenMenu: (branch: BranchRailItem, event: ReactMouseEvent) => void;
+  onAction: (action: BranchAction, branch?: BranchRailItem) => void | Promise<void>;
+}) {
+  return <>{nodes.map((node) => {
+    if (node.kind === "branch") {
+      return <BranchRow key={node.key} branch={node.branch} displayName={node.label} depth={depth} selected={selectedBranch === node.branch.fullName} busy={busy} onSelect={onSelect} onOpenMenu={onOpenMenu} onAction={onAction} />;
+    }
+
+    const open = forceExpanded || !collapsedFolders.has(node.key);
+    const groupId = branchPathGroupId(node.key);
+    const scopeLabel = scope === "local" ? "本地分支" : "远程分支";
+    return <div className="branch-path-folder" data-branch-scope={scope} data-branch-path={node.path} key={node.key}>
+      <button
+        type="button"
+        className="branch-path-folder-toggle"
+        style={{ "--branch-depth": Math.min(depth, 3) } as CSSProperties}
+        aria-expanded={open}
+        aria-controls={groupId}
+        aria-disabled={forceExpanded || undefined}
+        aria-label={`${scopeLabel}路径 ${node.path}，${node.branchCount} 个分支`}
+        onClick={() => forceExpanded ? undefined : onToggleFolder(node.key)}
+      >
+        <ChevronDown size={12} className={open ? "" : "collapsed"} />
+        {open ? <FolderOpen size={14} /> : <Folder size={14} />}
+        <strong>{node.label}</strong>
+        <small>{node.branchCount}</small>
+      </button>
+      {open ? <div id={groupId} className="branch-path-children" role="group" aria-label={`${scopeLabel} ${node.path} 子级`}>
+        <BranchPathTree scope={scope} nodes={node.children} depth={depth + 1} collapsedFolders={collapsedFolders} forceExpanded={forceExpanded} selectedBranch={selectedBranch} busy={busy} onToggleFolder={onToggleFolder} onSelect={onSelect} onOpenMenu={onOpenMenu} onAction={onAction} />
+      </div> : null}
+    </div>;
+  })}</>;
+}
+
+function branchPathGroupId(key: string) {
+  return `branch-path-group-${Array.from(key, (character) => character.codePointAt(0)?.toString(16) ?? "0").join("-")}`;
+}
+
+function branchRowAccessibleName(branch: BranchRailItem) {
+  const parts = [branch.name, branch.current ? "当前分支" : branch.type === "remote" ? "远程分支" : "本地分支"];
+  if (branch.upstream) parts.push(`跟踪 ${branch.upstream}`);
+  if (typeof branch.ahead === "number" && branch.ahead > 0) parts.push(`领先 ${branch.ahead}`);
+  if (typeof branch.behind === "number" && branch.behind > 0) parts.push(`落后 ${branch.behind}`);
+  return parts.join("，");
+}
+
+function BranchRow({ branch, displayName, depth, selected, busy, onSelect, onOpenMenu, onAction }: {
   branch: BranchRailItem;
+  displayName: string;
+  depth: number;
   selected: boolean;
   busy: boolean;
   onSelect: (fullName: string) => void;
   onOpenMenu: (branch: BranchRailItem, event: ReactMouseEvent) => void;
   onAction: (action: BranchAction, branch?: BranchRailItem) => void | Promise<void>;
 }) {
-  return <div className={`branch-row ${selected ? "selected" : ""}`} data-branch-name={branch.name} data-current={branch.current ? "true" : "false"} onContextMenu={(event) => onOpenMenu(branch, event)}>
-    <button type="button" className="branch-row-main" onClick={() => onSelect(branch.fullName)} onDoubleClick={() => branch.type === "local" && !branch.current ? void onAction("switch", branch) : undefined} disabled={busy}>
+  return <div className={`branch-row ${selected ? "selected" : ""}`} data-branch-name={branch.name} data-branch-type={branch.type} data-current={branch.current ? "true" : "false"} onContextMenu={(event) => onOpenMenu(branch, event)}>
+    <button type="button" className="branch-row-main" style={{ "--branch-depth": Math.min(depth, 3) } as CSSProperties} aria-label={branchRowAccessibleName(branch)} title={branch.name} onClick={() => onSelect(branch.fullName)} onDoubleClick={() => branch.type === "local" && !branch.current ? void onAction("switch", branch) : undefined} disabled={busy}>
       <GitBranch size={14} />
-      <span><strong>{branch.name}</strong><small>{branch.current ? "当前" : branch.upstream ?? branch.headHash.slice(0, 8)}</small></span>
+      <span><strong>{displayName}</strong><small>{branch.current ? "当前" : branch.upstream ?? branch.headHash.slice(0, 8)}</small></span>
       {typeof branch.ahead === "number" && branch.ahead > 0 ? <em>↑{branch.ahead}</em> : null}
       {typeof branch.behind === "number" && branch.behind > 0 ? <em>↓{branch.behind}</em> : null}
     </button>

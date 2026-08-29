@@ -482,13 +482,13 @@
   color: var(--text);
 }
 
-.platform-macos .floating-menu button:hover,
+.platform-macos .floating-menu button:hover:not(:disabled),
 .platform-macos .floating-menu button.active,
-.platform-macos .commit-menu button:hover,
-.platform-macos .graph-view-menu button:hover,
-.platform-macos .context-menu button:hover,
-.platform-macos .project-context-menu button:hover,
-.platform-macos .app-chrome-theme-menu > button:hover,
+.platform-macos .commit-menu button:hover:not(:disabled),
+.platform-macos .graph-view-menu button:hover:not(:disabled),
+.platform-macos .context-menu button:hover:not(:disabled),
+.platform-macos .project-context-menu button:hover:not(:disabled),
+.platform-macos .app-chrome-theme-menu > button:hover:not(:disabled),
 .platform-macos .app-chrome-theme-menu > button[aria-checked="true"] {
   color: #ffffff;
   background: var(--accent);
