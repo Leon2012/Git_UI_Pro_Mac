@@ -9794,12 +9794,12 @@ code,
 
 .branch-rail-header {
   display: flex;
-  gap: 6px;
+  gap: 2px;
   align-items: center;
   justify-content: space-between;
   min-width: 0;
   border-bottom: 1px solid var(--border);
-  padding: 0 6px 0 10px;
+  padding: 0 4px 0 8px;
 }
 
 .branch-rail-title,
@@ -9810,7 +9810,7 @@ code,
 }
 
 .branch-rail-title {
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -9838,11 +9838,22 @@ code,
 }
 
 .branch-rail-actions {
-  gap: 1px;
+  gap: 0;
   flex: 0 0 auto;
 }
 
-.branch-rail-actions button,
+.branch-rail-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 23px;
+  height: 26px;
+  border-radius: 5px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+}
+
 .branch-rail-expand,
 .branch-row-menu {
   display: inline-flex;
@@ -9854,6 +9865,13 @@ code,
   padding: 0;
   color: var(--muted);
   background: transparent;
+}
+
+.branch-rail-action-separator {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--border);
 }
 
 .branch-rail-actions button:hover:not(:disabled),
@@ -9896,18 +9914,20 @@ code,
 }
 
 .branch-group + .branch-group {
-  margin-top: 4px;
+  margin-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  padding-top: 6px;
 }
 
 .branch-group-toggle {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) max-content;
-  gap: 4px;
+  gap: 6px;
   align-items: center;
   width: 100%;
-  height: 28px;
+  height: 30px;
   border-radius: 5px;
-  padding: 0 5px;
+  padding: 0 7px;
   color: var(--muted);
   background: transparent;
   text-align: left;
@@ -9927,7 +9947,8 @@ code,
 
 .branch-group-items {
   display: grid;
-  gap: 1px;
+  gap: 2px;
+  padding: 2px 0 4px;
 }
 
 .branch-path-folder,
@@ -9936,20 +9957,33 @@ code,
 }
 
 .branch-path-children {
+  position: relative;
   display: grid;
-  gap: 1px;
+  gap: 2px;
+  padding: 2px 0 4px;
+}
+
+.branch-path-children::before {
+  position: absolute;
+  top: 0;
+  bottom: 4px;
+  left: calc(12px + var(--branch-depth, 0) * 14px);
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 78%, transparent);
+  content: "";
+  pointer-events: none;
 }
 
 .branch-path-folder-toggle {
   display: grid;
   grid-template-columns: 12px 14px minmax(0, 1fr) 18px;
-  gap: 4px;
+  gap: 6px;
   align-items: center;
   width: 100%;
-  height: 28px;
+  height: 30px;
   min-width: 0;
   border-radius: 5px;
-  padding: 0 5px 0 calc(5px + var(--branch-depth, 0) * 14px);
+  padding: 0 7px 0 calc(7px + var(--branch-depth, 0) * 14px);
   color: var(--muted);
   background: transparent;
   text-align: left;

@@ -287,7 +287,7 @@ test("分支路径树为合法碰撞路径生成唯一控制 ID", async ({ page 
   await expect(page.locator(`[id="${secondId}"]`)).toHaveCount(1);
 });
 
-test("分支路径树使用 Finder 式层级和稳定尺寸", async ({ page }) => {
+test("分支路径树使用清晰留白、层级引导线和稳定尺寸", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
   const rail = page.getByRole("complementary", { name: "分支" });
@@ -300,13 +300,26 @@ test("分支路径树使用 Finder 式层级和稳定尺寸", async ({ page }) =
     const style = getComputedStyle(element);
     const icon = element.querySelector<SVGElement>(".lucide-folder-open, .lucide-folder");
     const count = element.querySelector<HTMLElement>("small");
+    const children = element.nextElementSibling as HTMLElement | null;
+    const childrenStyle = children ? getComputedStyle(children) : null;
+    const guideStyle = children ? getComputedStyle(children, "::before") : null;
     return {
       height: style.height,
+      gap: style.columnGap,
       iconColor: icon ? getComputedStyle(icon).color : "missing",
-      countMinWidth: count ? getComputedStyle(count).minWidth : "missing"
+      countMinWidth: count ? getComputedStyle(count).minWidth : "missing",
+      childrenPaddingTop: childrenStyle?.paddingTop ?? "missing",
+      guideWidth: guideStyle?.width ?? "missing"
     };
   });
-  expect(styles).toEqual({ height: "28px", iconColor: "rgb(10, 132, 255)", countMinWidth: "18px" });
+  expect(styles).toEqual({
+    height: "30px",
+    gap: "6px",
+    iconColor: "rgb(10, 132, 255)",
+    countMinWidth: "18px",
+    childrenPaddingTop: "2px",
+    guideWidth: "1px"
+  });
 
   const featureLabel = await feature.locator("strong").boundingBox();
   const uiLabel = await ui.locator("strong").boundingBox();
@@ -333,6 +346,21 @@ test("分支路径树使用 Finder 式层级和稳定尺寸", async ({ page }) =
   await page.locator(".app-shell").evaluate((element) => {
     (element as HTMLElement).style.setProperty("--branch-width", "180px");
   });
+  const headerGeometry = await rail.locator(".branch-rail-header").evaluate((element) => {
+    const title = element.querySelector<HTMLElement>(".branch-rail-title")!;
+    const actions = element.querySelector<HTMLElement>(".branch-rail-actions")!;
+    const railBox = element.parentElement!.getBoundingClientRect();
+    const titleContentRight = Math.max(...Array.from(title.children, (child) => child.getBoundingClientRect().right));
+    return {
+      titleContentRight,
+      actionsLeft: actions.getBoundingClientRect().left,
+      actionsRight: actions.getBoundingClientRect().right,
+      railRight: railBox.right
+    };
+  });
+  expect(headerGeometry.actionsLeft).toBeGreaterThanOrEqual(headerGeometry.titleContentRight + 2);
+  expect(headerGeometry.actionsRight).toBeLessThanOrEqual(headerGeometry.railRight - 3);
+
   const deepRootLabel = await rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="deep"] > button > strong').boundingBox();
   const deepFolderLabel = await rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="deep/a/b/c/d/e/f/g/h/i/j/k"] > button > strong').boundingBox();
   const deepLeafWidth = await rail.locator('[data-branch-name="deep/a/b/c/d/e/f/g/h/i/j/k/leaf"] strong').evaluate((element) => element.clientWidth);
@@ -467,6 +495,9 @@ test("分支树操作保留完整名称和远程分解参数", async ({ page }) 
 
   const remoteRow = rail.locator('[data-branch-name="origin/feature/menu-contrast"][data-branch-type="remote"]');
   const remoteMenuTrigger = remoteRow.getByRole("button", { name: "origin/feature/menu-contrast 分支操作" });
+  await remoteRow.getByRole("button").first().click();
+  await rail.getByRole("button", { name: "获取 origin/feature/menu-contrast", exact: true }).click();
+
   await remoteMenuTrigger.click();
   await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "创建跟踪分支" }).click();
 
@@ -477,7 +508,7 @@ test("分支树操作保留完整名称和远程分解参数", async ({ page }) 
   await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "删除远程分支" }).click();
   await page.getByRole("button", { name: "确认删除" }).click();
 
-  await expect.poll(async () => page.evaluate(() => (window as typeof window & { __branchActionCalls?: unknown[] }).__branchActionCalls?.length ?? 0)).toBe(8);
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { __branchActionCalls?: unknown[] }).__branchActionCalls?.length ?? 0)).toBe(9);
   const calls = await page.evaluate(() => (window as typeof window & {
     __branchActionCalls?: Array<{ method: string; args: unknown[] }>;
   }).__branchActionCalls ?? []);
@@ -489,11 +520,13 @@ test("分支树操作保留完整名称和远程分解参数", async ({ page }) 
   expect(byMethod("renameBranch")[0].args.slice(1)).toEqual(["feature/ui/menu-contrast", "feature/ui/menu-contrast-renamed", false]);
   expect(byMethod("deleteBranch")[0].args.slice(1)).toEqual(["feature/ui/menu-contrast", false]);
   expect(byMethod("switchBranch")[1].args[1]).toMatchObject({ name: "origin/feature/menu-contrast", type: "remote" });
+  expect(byMethod("fetchRemote")).toHaveLength(2);
   expect(byMethod("fetchRemote")[0].args.slice(1, 3)).toEqual(["origin", true]);
+  expect(byMethod("fetchRemote")[1].args.slice(1, 3)).toEqual(["origin", true]);
   expect(byMethod("deleteRemoteBranch")[0].args.slice(1)).toEqual(["origin", "feature/menu-contrast"]);
 });
 
-test("分支树当前多级分支保留获取拉取推送和新建调用语义", async ({ page }) => {
+test("分支栏顶部快捷操作使用当前多级分支执行获取拉取推送和新建", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
   await page.getByText("Order Platform", { exact: true }).click();
@@ -523,15 +556,13 @@ test("分支树当前多级分支保留获取拉取推送和新建调用语义",
     } as unknown as typeof window.gitUI;
   });
 
-  const trigger = rail.getByRole("button", { name: "release/2.4 分支操作" });
   for (const action of ["获取", "拉取", "推送"] as const) {
-    await trigger.click();
-    await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: action, exact: true }).click();
+    await rail.getByRole("button", { name: `${action} release/2.4`, exact: true }).click();
   }
 
-  await trigger.click();
-  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "新建分支" }).click();
+  await rail.getByRole("button", { name: "从 release/2.4 新建分支", exact: true }).click();
   const createDialog = page.getByRole("dialog", { name: "新建分支" });
+  await expect(createDialog).toContainText("基于 release/2.4");
   await createDialog.getByLabel("分支名").fill("release/2.5");
   await createDialog.getByRole("button", { name: "创建" }).click();
 
@@ -543,7 +574,20 @@ test("分支树当前多级分支保留获取拉取推送和新建调用语义",
   expect(calls[1].args[1]).toBe("ff-only");
   expect(calls[2].args[1]).toMatchObject({ operationId: expect.any(String) });
   expect(calls[2].args[1]).not.toHaveProperty("forceWithLease");
-  expect(calls[3].args.slice(1, 3)).toEqual(["release/2.5", true]);
+  expect(calls[3].args.slice(1)).toEqual(["release/2.5", true, "refs/heads/release/2.4"]);
+});
+
+test("分支栏顶部快捷操作跟随选中分支并限制非当前分支拉取推送", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
+  await openApp(page, "macos");
+  const rail = page.getByRole("complementary", { name: "分支" });
+
+  await rail.locator('[data-branch-name="feature/project-scan"] .branch-row-main').click();
+
+  await expect(rail.getByRole("button", { name: "获取 feature/project-scan", exact: true })).toBeEnabled();
+  await expect(rail.getByRole("button", { name: "拉取 feature/project-scan", exact: true })).toBeDisabled();
+  await expect(rail.getByRole("button", { name: "推送 feature/project-scan", exact: true })).toBeDisabled();
+  await expect(rail.getByRole("button", { name: "从 feature/project-scan 新建分支", exact: true })).toBeEnabled();
 });
 
 test("分支搜索框只由外层容器绘制边框", async ({ page }) => {
@@ -1516,18 +1560,27 @@ test("文件对比铺满详情区并高亮行内变更", async ({ page }) => {
 
   const metrics = await diffPanel.evaluate((panel) => {
     const grid = panel.querySelector<HTMLElement>(".split-diff-grid")!;
+    const minimap = panel.closest(".editor-diff-shell")!.querySelector<HTMLElement>(".diff-minimap")!;
+    const panelStyle = window.getComputedStyle(panel);
     const panelRect = panel.getBoundingClientRect();
     const gridRect = grid.getBoundingClientRect();
+    const minimapRect = minimap.getBoundingClientRect();
     return {
       panelClientHeight: panel.clientHeight,
-      panelContentWidth: panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight),
+      panelContentWidth: panel.clientWidth - Number.parseFloat(panelStyle.paddingLeft) - Number.parseFloat(panelStyle.paddingRight),
       gridHeight: gridRect.height,
       gridWidth: gridRect.width,
-      horizontalInset: gridRect.left - panelRect.left
+      horizontalInset: gridRect.left - panelRect.left,
+      minimapInset: minimapRect.left - panelRect.left,
+      minimapRight: minimapRect.right,
+      gridLeft: gridRect.left
     };
   });
 
-  expect(metrics.horizontalInset).toBeLessThanOrEqual(1);
+  expect(metrics.minimapInset).toBeLessThanOrEqual(1);
+  expect(metrics.horizontalInset).toBeGreaterThanOrEqual(57);
+  expect(metrics.horizontalInset).toBeLessThanOrEqual(59);
+  expect(metrics.minimapRight).toBeLessThanOrEqual(metrics.gridLeft + 1);
   expect(metrics.gridWidth).toBeGreaterThanOrEqual(metrics.panelContentWidth - 1);
   expect(metrics.gridHeight).toBeGreaterThanOrEqual(metrics.panelClientHeight - 16);
 });

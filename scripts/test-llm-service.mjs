@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
 const {
+  DEFAULT_REQUEST_TIMEOUT_MS,
   LlmService,
   buildCommitMessageContext,
   normalizeLlmBaseUrl,
@@ -29,6 +30,10 @@ function jsonResponse(body, init = {}) {
     headers: { "content-type": "application/json" }
   });
 }
+
+test("LLM 默认请求超时为 15 秒", () => {
+  assert.equal(DEFAULT_REQUEST_TIMEOUT_MS, 15_000);
+});
 
 test("LLM Base URL permits HTTPS and private HTTP while rejecting public plaintext endpoints", () => {
   assert.deepEqual(normalizeLlmBaseUrl("https://api.example.com/v1/"), {

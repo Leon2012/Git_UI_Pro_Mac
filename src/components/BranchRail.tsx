@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronLeft, ChevronRight, Folder, FolderOpen, GitBranch, MoreHorizontal, Plus, RefreshCw, Search } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, CloudDownload, CloudUpload, Folder, FolderOpen, GitBranch, GitBranchPlus, MoreHorizontal, RefreshCw, Search } from "lucide-react";
 import type { BranchInfo, GitRemoteInfo } from "../types/domain";
 import { PathTooltip } from "./PathTooltip";
 
@@ -185,6 +185,11 @@ export function BranchRail({
   const localTree = useMemo(() => buildBranchPathTree(localBranches, "local"), [localBranches]);
   const remoteTree = useMemo(() => buildBranchPathTree(remoteBranches, "remote"), [remoteBranches]);
   const searchActive = normalizedQuery.length > 0;
+  const toolbarBranch = branches.find((branch) => branch.fullName === selectedBranch)
+    ?? branches.find((branch) => branch.current);
+  const toolbarBranchLabel = toolbarBranch?.name ?? "当前分支";
+  const toolbarBusy = Boolean(busyAction);
+  const toolbarUsesCurrentLocalBranch = toolbarBranch?.type === "local" && toolbarBranch.current;
 
   function toggleFolder(key: string) {
     if (searchActive) return;
@@ -268,12 +273,19 @@ export function BranchRail({
       <header className="branch-rail-header">
         <span className="branch-rail-title"><GitBranch size={16} /><h2>分支</h2><small>{branches.length}</small></span>
         <span className="branch-rail-actions">
-          <PathTooltip content="刷新分支">
-            <button type="button" aria-label="刷新分支" onClick={onRefresh} disabled={loading || Boolean(busyAction)}><RefreshCw size={14} className={loading ? "spin" : ""} /></button>
+          <PathTooltip content={`获取 ${toolbarBranchLabel}`}>
+            <button type="button" aria-label={`获取 ${toolbarBranchLabel}`} onClick={() => void onAction("fetch", toolbarBranch)} disabled={!toolbarBranch || loading || toolbarBusy}><RefreshCw size={14} className={busyAction?.startsWith("fetch") ? "spin" : ""} /></button>
           </PathTooltip>
-          <PathTooltip content="新建分支">
-            <button type="button" aria-label="新建分支" onClick={() => void onAction("create")} disabled={Boolean(busyAction)}><Plus size={15} /></button>
+          <PathTooltip content={`拉取 ${toolbarBranchLabel}`}>
+            <button type="button" aria-label={`拉取 ${toolbarBranchLabel}`} onClick={() => void onAction("pull", toolbarBranch)} disabled={!toolbarUsesCurrentLocalBranch || !toolbarBranch?.upstream || toolbarBusy}><CloudDownload size={14} /></button>
           </PathTooltip>
+          <PathTooltip content={`推送 ${toolbarBranchLabel}`}>
+            <button type="button" aria-label={`推送 ${toolbarBranchLabel}`} onClick={() => void onAction("push", toolbarBranch)} disabled={!toolbarUsesCurrentLocalBranch || toolbarBusy}><CloudUpload size={14} /></button>
+          </PathTooltip>
+          <PathTooltip content={`从 ${toolbarBranchLabel} 新建分支`}>
+            <button type="button" aria-label={`从 ${toolbarBranchLabel} 新建分支`} onClick={() => void onAction("create", toolbarBranch)} disabled={!toolbarBranch || toolbarBusy}><GitBranchPlus size={14} /></button>
+          </PathTooltip>
+          <span className="branch-rail-action-separator" aria-hidden="true" />
           <PathTooltip content="收起分支栏">
             <button type="button" aria-label="收起分支栏" onClick={onToggleCollapsed}><ChevronLeft size={15} /></button>
           </PathTooltip>
@@ -363,7 +375,7 @@ function BranchPathTree({ scope, nodes, depth, collapsedFolders, forceExpanded, 
         <strong>{node.label}</strong>
         <small>{node.branchCount}</small>
       </button>
-      {open ? <div id={groupId} className="branch-path-children" role="group" aria-label={`${scopeLabel} ${node.path} 子级`}>
+      {open ? <div id={groupId} className="branch-path-children" role="group" aria-label={`${scopeLabel} ${node.path} 子级`} style={{ "--branch-depth": Math.min(depth, 3) } as CSSProperties}>
         <BranchPathTree scope={scope} nodes={node.children} depth={depth + 1} collapsedFolders={collapsedFolders} forceExpanded={forceExpanded} selectedBranch={selectedBranch} busy={busy} onToggleFolder={onToggleFolder} onSelect={onSelect} onOpenMenu={onOpenMenu} onAction={onAction} />
       </div> : null}
     </div>;

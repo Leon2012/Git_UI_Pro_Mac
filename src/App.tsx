@@ -587,12 +587,25 @@ export function App() {
   async function handleBranchRailAction(action: BranchAction, branch?: BranchRailItem) {
     if (!selectedProject || branchRailBusyAction) return;
     if (action === "create") {
-      await createBranchFromToolbar(selectedProject);
+      await createBranchFromToolbar(selectedProject, branch);
       return;
     }
     if (action === "fetch" || action === "pull" || action === "push") {
-      if (await runRemoteOperation(action, selectedProject)) {
-        await loadBranchRail(selectedProject);
+      if (action === "fetch" && branch?.type === "remote" && branch.remoteName) {
+        await handleBranchRailAction("fetch-remote", branch);
+        return;
+      }
+      if ((action === "pull" || action === "push") && branch && (!branch.current || branch.type !== "local")) {
+        notifyInfo(`${action === "pull" ? "拉取" : "推送"}只能对当前本地分支执行`);
+        return;
+      }
+      setBranchRailBusyAction(`${action}:${branch?.fullName ?? "current"}`);
+      try {
+        if (await runRemoteOperation(action, selectedProject)) {
+          await loadBranchRail(selectedProject);
+        }
+      } finally {
+        setBranchRailBusyAction("");
       }
       return;
     }
@@ -2287,12 +2300,19 @@ export function App() {
     }
   }
 
-  async function createBranchFromToolbar(project: GitProject) {
+  async function createBranchFromToolbar(project: GitProject, startBranch?: BranchInfo) {
     if (!requireGitReady("新建分支")) {
       return;
     }
 
-    setBranchDialog({ mode: "create", project, branchName: "", checkout: true });
+    setBranchDialog({
+      mode: "create",
+      project,
+      branchName: "",
+      checkout: true,
+      startPoint: startBranch?.fullName,
+      startLabel: startBranch?.name
+    });
   }
 
   async function submitCreateBranch() {
@@ -3743,7 +3763,7 @@ function BranchDialog({
             </label>
             {state.mode === "create" && state.startLabel ? (
               <div className="branch-start-point">
-                基于提交 <code>{state.startLabel}</code>
+                基于 <code>{state.startLabel}</code>
               </div>
             ) : null}
             {state.mode === "rename" ? <div className="branch-start-point">原分支 <code>{state.branch.name}</code></div> : null}
