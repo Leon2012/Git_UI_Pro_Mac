@@ -18,13 +18,20 @@ import {
   type MenuDescriptorItem
 } from "./platformConfig";
 import { MenuCommandDispatcher } from "./menuCommandDispatcher";
-import { LlmService, type LlmConnectionTestInput, type LlmSettingsUpdate } from "./llmService";
+import {
+  createLlmDiagnosticLogger,
+  LlmService,
+  type LlmConnectionTestInput,
+  type LlmDiagnosticLogger,
+  type LlmSettingsUpdate
+} from "./llmService";
 
 let mainWindow: BrowserWindow | null = null;
 let configStore: ConfigStore;
 let updateService: UpdateService;
 let hostingService: HostingService;
 let llmService: LlmService;
+let llmDiagnosticLogger: LlmDiagnosticLogger;
 const gitService = new GitService();
 const terminalSessions = new Map<string, TerminalSession>();
 let terminalSessionSeed = 0;
@@ -272,8 +279,35 @@ function registerIpc(): void {
   ipcMain.handle("llm:clearApiKey", () => llmService.clearApiKey());
   ipcMain.handle("llm:testConnection", (_event, input: LlmConnectionTestInput) => llmService.testConnection(input));
   ipcMain.handle("llm:generateCommitMessage", async (_event, repositoryPath: RepositoryLocation) => {
-    const context = await gitService.getCommitMessageContext(repositoryPath);
-    return llmService.generateCommitMessage(context);
+    const requestId = randomUUID();
+    const startedAt = Date.now();
+    llmDiagnosticLogger.log("context_build_started", {
+      requestId,
+      operation: "commit_message",
+      elapsedMs: 0
+    });
+    let context;
+    try {
+      context = await gitService.getCommitMessageContext(repositoryPath);
+    } catch (error) {
+      llmDiagnosticLogger.log("context_build_failed", {
+        requestId,
+        operation: "commit_message",
+        errorName: error instanceof Error ? error.name : typeof error,
+        elapsedMs: Date.now() - startedAt
+      });
+      throw error;
+    }
+    llmDiagnosticLogger.log("context_build_succeeded", {
+      requestId,
+      operation: "commit_message",
+      contextBytes: Buffer.byteLength(context.content, "utf8"),
+      contextFiles: context.fileCount,
+      contextScope: context.scope,
+      contextTruncated: context.truncated,
+      elapsedMs: Date.now() - startedAt
+    });
+    return llmService.generateCommitMessage(context, requestId);
   });
 
   ipcMain.handle("projects:add", async (_event, directoryPath: string) => {
@@ -812,7 +846,8 @@ if (!hasSingleInstanceLock) {
     const userDataPath = app.getPath("userData");
     configStore = new ConfigStore(userDataPath);
     hostingService = new HostingService(userDataPath);
-    llmService = new LlmService(userDataPath);
+    llmDiagnosticLogger = createLlmDiagnosticLogger(userDataPath);
+    llmService = new LlmService(userDataPath, { diagnosticLogger: llmDiagnosticLogger });
     if (isPortableSmokeTest) {
       await configStore.read();
       app.exit(0);

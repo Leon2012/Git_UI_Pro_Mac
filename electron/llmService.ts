@@ -1,6 +1,6 @@
 import { safeStorage } from "electron";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export interface LlmSettingsSummary {
@@ -58,6 +58,26 @@ export interface CommitMessageContextInput {
   maxBytes?: number;
 }
 
+export type LlmDiagnosticEvent =
+  | "context_build_started"
+  | "context_build_succeeded"
+  | "context_build_failed"
+  | "request_started"
+  | "attempt_started"
+  | "attempt_failed"
+  | "response_headers_received"
+  | "response_body_read"
+  | "request_succeeded"
+  | "request_failed"
+  | "request_timed_out";
+
+export type LlmDiagnosticDetails = Record<string, string | number | boolean | null | undefined>;
+
+export interface LlmDiagnosticLogger {
+  log(event: LlmDiagnosticEvent, details?: LlmDiagnosticDetails): void;
+  flush(): Promise<void>;
+}
+
 export interface CredentialCrypto {
   isEncryptionAvailable(): boolean;
   encryptString(value: string): Buffer;
@@ -76,6 +96,7 @@ interface LlmServiceOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   maxResponseBytes?: number;
+  diagnosticLogger?: Pick<LlmDiagnosticLogger, "log">;
 }
 
 interface NormalizedLlmUrl {
@@ -102,11 +123,41 @@ const RETRYABLE_CONNECT_ERROR_CODES = new Set([
   "ENETUNREACH"
 ]);
 const COMMIT_SYSTEM_PROMPT = [
-  "Generate exactly one English Conventional Commit title for the supplied Git changes.",
-  "Use the form type(scope): imperative subject or type: imperative subject.",
+  "Generate exactly one Conventional Commit title for the supplied Git changes.",
+  "Use the form type(scope): subject or type: subject, keeping type and optional scope in lowercase English.",
+  "Write the subject as a concise Simplified Chinese phrase containing at least one Chinese character.",
   "Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.",
   "Return only the title, with no Markdown, quotes, body, explanation, or trailing period."
 ].join(" ");
+
+const noopDiagnosticLogger: Pick<LlmDiagnosticLogger, "log"> = {
+  log: () => undefined
+};
+
+export function createLlmDiagnosticLogger(userDataPath: string): LlmDiagnosticLogger {
+  const logPath = path.join(userDataPath, "logs", "llm-diagnostics.log");
+  let writeQueue = Promise.resolve();
+  return {
+    log(event, details = {}) {
+      const entry = {
+        timestamp: new Date().toISOString(),
+        event,
+        ...details
+      };
+      const line = JSON.stringify(entry);
+      console.info(`[llm-diagnostic] ${line}`);
+      writeQueue = writeQueue
+        .then(async () => {
+          await mkdir(path.dirname(logPath), { recursive: true });
+          await appendFile(logPath, `${line}\n`, { encoding: "utf8", mode: 0o600 });
+        })
+        .catch((error) => {
+          console.warn("[llm-diagnostic] 无法写入诊断日志", error instanceof Error ? error.message : String(error));
+        });
+    },
+    flush: () => writeQueue
+  };
+}
 
 const electronCredentialCrypto: CredentialCrypto = {
   isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
@@ -120,6 +171,7 @@ export class LlmService {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
   private readonly maxResponseBytes: number;
+  private readonly diagnosticLogger: Pick<LlmDiagnosticLogger, "log">;
 
   constructor(userDataPath: string, options: LlmServiceOptions = {}) {
     this.storePath = path.join(userDataPath, "llm-settings.secure.json");
@@ -127,6 +179,7 @@ export class LlmService {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.maxResponseBytes = options.maxResponseBytes ?? DEFAULT_RESPONSE_MAX_BYTES;
+    this.diagnosticLogger = options.diagnosticLogger ?? noopDiagnosticLogger;
   }
 
   async getSettings(): Promise<LlmSettingsSummary> {
@@ -190,11 +243,14 @@ export class LlmService {
     const apiKey = input.apiKey?.trim() || await this.getApiKeyForRequest();
     await this.requestChatCompletion(normalizedUrl.endpoint, model, apiKey, [
       { role: "user", content: "Reply with OK." }
-    ]);
+    ], {
+      requestId: randomUUID(),
+      operation: "connection_test"
+    });
     return { ok: true, model };
   }
 
-  async generateCommitMessage(context: CommitMessageContext): Promise<LlmCommitMessageResult> {
+  async generateCommitMessage(context: CommitMessageContext, requestId = randomUUID()): Promise<LlmCommitMessageResult> {
     const settings = await this.loadStore();
     const normalizedUrl = normalizeLlmBaseUrl(settings.baseUrl);
     const model = requireModel(settings.model);
@@ -202,7 +258,14 @@ export class LlmService {
     const content = await this.requestChatCompletion(normalizedUrl.endpoint, model, apiKey, [
       { role: "system", content: COMMIT_SYSTEM_PROMPT },
       { role: "user", content: context.content }
-    ]);
+    ], {
+      requestId,
+      operation: "commit_message",
+      contextBytes: Buffer.byteLength(context.content, "utf8"),
+      contextFiles: context.fileCount,
+      contextScope: context.scope,
+      contextTruncated: context.truncated
+    });
     return {
       message: parseCommitMessageResponse(content),
       scope: context.scope,
@@ -215,15 +278,51 @@ export class LlmService {
     endpoint: string,
     model: string,
     apiKey: string,
-    messages: Array<{ role: "system" | "user"; content: string }>
+    messages: Array<{ role: "system" | "user"; content: string }>,
+    diagnostic: {
+      requestId: string;
+      operation: "connection_test" | "commit_message";
+      contextBytes?: number;
+      contextFiles?: number;
+      contextScope?: CommitMessageContext["scope"];
+      contextTruncated?: boolean;
+    }
   ): Promise<string> {
+    const startedAt = Date.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const requestBody = JSON.stringify({
+      model,
+      messages,
+      temperature: 0,
+      stream: false
+    });
+    let stage = "preparing_request";
+    let attemptCount = 0;
+    let response: Response | undefined;
+    this.diagnosticLogger.log("request_started", {
+      requestId: diagnostic.requestId,
+      operation: diagnostic.operation,
+      endpoint: diagnosticEndpoint(endpoint),
+      model,
+      timeoutMs: this.timeoutMs,
+      requestBytes: Buffer.byteLength(requestBody, "utf8"),
+      contextBytes: diagnostic.contextBytes,
+      contextFiles: diagnostic.contextFiles,
+      contextScope: diagnostic.contextScope,
+      contextTruncated: diagnostic.contextTruncated,
+      elapsedMs: 0
+    });
     try {
-      let response: Response | undefined;
-      let attemptCount = 0;
       while (!response && attemptCount < MAX_CONNECT_ATTEMPTS) {
         attemptCount += 1;
+        const attemptStartedAt = Date.now();
+        stage = "awaiting_response_headers";
+        this.diagnosticLogger.log("attempt_started", {
+          requestId: diagnostic.requestId,
+          attempt: attemptCount,
+          elapsedMs: Date.now() - startedAt
+        });
         try {
           response = await this.fetchImpl(endpoint, {
             method: "POST",
@@ -231,19 +330,29 @@ export class LlmService {
               "Content-Type": "application/json",
               Authorization: `Bearer ${apiKey}`
             },
-            body: JSON.stringify({
-              model,
-              messages,
-              temperature: 0,
-              stream: false
-            }),
+            body: requestBody,
             signal: controller.signal
+          });
+          this.diagnosticLogger.log("response_headers_received", {
+            requestId: diagnostic.requestId,
+            attempt: attemptCount,
+            status: response.status,
+            attemptElapsedMs: Date.now() - attemptStartedAt,
+            elapsedMs: Date.now() - startedAt,
+            contentLength: safeContentLength(response.headers.get("content-length"))
           });
         } catch (error) {
           if (controller.signal.aborted) {
             throw requestTimeoutError(this.timeoutMs);
           }
           const errorCode = networkErrorCode(error);
+          this.diagnosticLogger.log("attempt_failed", {
+            requestId: diagnostic.requestId,
+            attempt: attemptCount,
+            stage,
+            errorCode: errorCode ?? "UNKNOWN",
+            elapsedMs: Date.now() - startedAt
+          });
           if (errorCode && RETRYABLE_CONNECT_ERROR_CODES.has(errorCode) && attemptCount < MAX_CONNECT_ATTEMPTS) {
             continue;
           }
@@ -255,27 +364,57 @@ export class LlmService {
       }
 
       if (!response.ok) {
+        stage = "validating_response_status";
         throw new Error(`LLM 服务返回 HTTP ${response.status}，请检查 API Key、Model 和服务配置。`);
       }
-      const payload = await this.readBoundedJson(response, controller.signal);
+      stage = "reading_response_body";
+      const { payload, responseBytes } = await this.readBoundedJson(response, controller.signal);
+      this.diagnosticLogger.log("response_body_read", {
+        requestId: diagnostic.requestId,
+        attempt: attemptCount,
+        responseBytes,
+        elapsedMs: Date.now() - startedAt
+      });
+      stage = "validating_response_body";
       const content = payload && typeof payload === "object"
         ? (payload as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content
         : undefined;
       if (typeof content !== "string" || !content.trim()) {
         throw new Error("LLM 服务没有返回有效消息，请确认其兼容 Chat Completions 接口。");
       }
+      this.diagnosticLogger.log("request_succeeded", {
+        requestId: diagnostic.requestId,
+        attempt: attemptCount,
+        elapsedMs: Date.now() - startedAt
+      });
       return content;
     } catch (error) {
       if (controller.signal.aborted) {
+        this.diagnosticLogger.log("request_timed_out", {
+          requestId: diagnostic.requestId,
+          attempt: attemptCount,
+          stage,
+          elapsedMs: Date.now() - startedAt,
+          timeoutMs: this.timeoutMs
+        });
         throw requestTimeoutError(this.timeoutMs);
       }
+      this.diagnosticLogger.log("request_failed", {
+        requestId: diagnostic.requestId,
+        attempt: attemptCount,
+        stage,
+        status: response?.status,
+        errorCode: networkErrorCode(error) ?? "UNKNOWN",
+        errorName: error instanceof Error ? error.name : typeof error,
+        elapsedMs: Date.now() - startedAt
+      });
       throw error;
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  private async readBoundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  private async readBoundedJson(response: Response, signal: AbortSignal): Promise<{ payload: unknown; responseBytes: number }> {
     const reader = response.body?.getReader();
     if (!reader) {
       throw new Error("LLM 服务返回了空响应。");
@@ -310,7 +449,7 @@ export class LlmService {
 
     const body = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
     try {
-      return JSON.parse(body);
+      return { payload: JSON.parse(body), responseBytes: totalBytes };
     } catch {
       throw new Error("LLM 服务返回的 JSON 格式不正确。");
     }
@@ -369,6 +508,19 @@ function networkErrorCode(error: unknown): string | undefined {
   return undefined;
 }
 
+function diagnosticEndpoint(endpoint: string): string {
+  const parsed = new URL(endpoint);
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+}
+
+function safeContentLength(value: string | null): number | undefined {
+  if (!value || !/^\d+$/.test(value)) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
 export function normalizeLlmBaseUrl(value: string): NormalizedLlmUrl {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -418,8 +570,12 @@ export function parseCommitMessageResponse(value: string): string {
   if (/\r|\n/.test(normalized)) {
     throw new Error("LLM 必须返回单行提交标题。");
   }
-  if (!/^(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9][a-z0-9._/-]*\))?!?: [a-z][\x20-\x7e]*$/.test(normalized)) {
-    throw new Error("LLM 返回值不是有效的英文 Conventional Commit 标题。");
+  const match = normalized.match(/^(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9][a-z0-9._/-]*\))?!?: (.+)$/u);
+  if (!match || /[\u0000-\u001f\u007f]/u.test(match[1])) {
+    throw new Error("LLM 返回值不是有效的 Conventional Commit 标题。");
+  }
+  if (!/\p{Script=Han}/u.test(match[1])) {
+    throw new Error("LLM 返回的提交标题摘要必须包含中文。");
   }
   return normalized;
 }

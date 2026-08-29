@@ -11,6 +11,7 @@ const {
   DEFAULT_REQUEST_TIMEOUT_MS,
   LlmService,
   buildCommitMessageContext,
+  createLlmDiagnosticLogger,
   normalizeLlmBaseUrl,
   parseCommitMessageResponse
 } = require("../dist-electron/llmService.js");
@@ -35,6 +36,21 @@ test("LLM 默认请求超时为 15 秒", () => {
   assert.equal(DEFAULT_REQUEST_TIMEOUT_MS, 15_000);
 });
 
+test("LLM diagnostics persist as JSON lines under the application data directory", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "git-ui-pro-llm-log-"));
+  const logger = createLlmDiagnosticLogger(directory);
+
+  logger.log("request_started", { requestId: "persisted-request", elapsedMs: 0 });
+  await logger.flush();
+
+  const contents = await readFile(path.join(directory, "logs", "llm-diagnostics.log"), "utf8");
+  const entry = JSON.parse(contents.trim());
+  assert.equal(entry.event, "request_started");
+  assert.equal(entry.requestId, "persisted-request");
+  assert.equal(entry.elapsedMs, 0);
+  assert.match(entry.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+});
+
 test("LLM Base URL permits HTTPS and private HTTP while rejecting public plaintext endpoints", () => {
   assert.deepEqual(normalizeLlmBaseUrl("https://api.example.com/v1/"), {
     baseUrl: "https://api.example.com/v1",
@@ -54,15 +70,16 @@ test("LLM Base URL permits HTTPS and private HTTP while rejecting public plainte
   assert.throws(() => normalizeLlmBaseUrl("https://user:password@example.com/v1"), /用户名或密码/);
 });
 
-test("commit message parser accepts one English Conventional Commit title and strips wrappers", () => {
-  assert.equal(parseCommitMessageResponse("feat(branches): add branch context actions"), "feat(branches): add branch context actions");
-  assert.equal(parseCommitMessageResponse("```text\nfix: handle empty repository\n```"), "fix: handle empty repository");
-  assert.equal(parseCommitMessageResponse('"docs(readme): clarify setup steps"'), "docs(readme): clarify setup steps");
-  assert.equal(parseCommitMessageResponse("Commit message: feat(ui): add branch rail"), "feat(ui): add branch rail");
-  assert.equal(parseCommitMessageResponse("Conventional Commit: fix(llm): redact json credentials"), "fix(llm): redact json credentials");
+test("commit message parser accepts one Chinese Conventional Commit title and strips wrappers", () => {
+  assert.equal(parseCommitMessageResponse("feat(branches): 增加分支快捷操作"), "feat(branches): 增加分支快捷操作");
+  assert.equal(parseCommitMessageResponse("```text\nfix: 处理空仓库\n```"), "fix: 处理空仓库");
+  assert.equal(parseCommitMessageResponse('\"docs(readme): 补充安装步骤\"'), "docs(readme): 补充安装步骤");
+  assert.equal(parseCommitMessageResponse("Commit message: feat(ui): 增加分支栏"), "feat(ui): 增加分支栏");
+  assert.equal(parseCommitMessageResponse("Conventional Commit: fix(llm): 隐藏敏感凭据"), "fix(llm): 隐藏敏感凭据");
 
   assert.throws(() => parseCommitMessageResponse("这是一个提交标题"), /Conventional Commit/);
-  assert.throws(() => parseCommitMessageResponse("feat: add branch rail\nThis also updates styles."), /单行/);
+  assert.throws(() => parseCommitMessageResponse("feat: add branch rail"), /中文/);
+  assert.throws(() => parseCommitMessageResponse("feat: 增加分支栏\n同时更新样式"), /单行/);
   assert.throws(() => parseCommitMessageResponse("Here is the message: feat: add branch rail"), /Conventional Commit/);
 });
 
@@ -283,21 +300,100 @@ test("commit generation sends OpenAI Chat Completions and validates the returned
     credentialCrypto: fakeCrypto(),
     fetchImpl: async (url, init) => {
       request = { url: String(url), init, body: JSON.parse(String(init.body)) };
-      return jsonResponse({ choices: [{ message: { content: "feat(llm): generate commit titles" } }] });
+      return jsonResponse({ choices: [{ message: { content: "feat(llm): 生成提交标题" } }] });
     }
   });
   await service.saveSettings({ baseUrl: "https://api.example.com/v1", model: "commit-model", apiKey: "stored-key" });
 
   const context = { scope: "staged", content: "Commit scope: staged\nPatch:\n+change", truncated: false, fileCount: 1 };
   const result = await service.generateCommitMessage(context);
-  assert.deepEqual(result, { message: "feat(llm): generate commit titles", scope: "staged", truncated: false, fileCount: 1 });
+  assert.deepEqual(result, { message: "feat(llm): 生成提交标题", scope: "staged", truncated: false, fileCount: 1 });
   assert.equal(request.url, "https://api.example.com/v1/chat/completions");
   assert.equal(request.init.method, "POST");
   assert.equal(request.init.headers.Authorization, "Bearer stored-key");
   assert.equal(request.body.model, "commit-model");
   assert.equal(request.body.stream, false);
   assert.match(request.body.messages[0].content, /Conventional Commit/);
+  assert.match(request.body.messages[0].content, /Simplified Chinese/);
   assert.equal(request.body.messages[1].content, context.content);
+});
+
+test("LLM diagnostics identify request stages without logging credentials or content", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "git-ui-pro-llm-"));
+  const diagnostics = [];
+  const service = new LlmService(directory, {
+    credentialCrypto: fakeCrypto(),
+    diagnosticLogger: {
+      log: (event, details) => diagnostics.push({ event, ...details })
+    },
+    fetchImpl: async () => jsonResponse({
+      choices: [{ message: { content: "feat(llm): 生成敏感标题" } }]
+    })
+  });
+  await service.saveSettings({
+    baseUrl: "https://api.example.com/v1",
+    model: "diagnostic-model",
+    apiKey: "diagnostic-secret-key"
+  });
+
+  await service.generateCommitMessage({
+    scope: "staged",
+    content: "diff-secret-content",
+    truncated: false,
+    fileCount: 2
+  }, "request-for-test");
+
+  assert.deepEqual(diagnostics.map((entry) => entry.event), [
+    "request_started",
+    "attempt_started",
+    "response_headers_received",
+    "response_body_read",
+    "request_succeeded"
+  ]);
+  assert.equal(diagnostics.every((entry) => entry.requestId === "request-for-test"), true);
+  assert.equal(diagnostics[0].operation, "commit_message");
+  assert.equal(diagnostics[0].contextFiles, 2);
+  assert.equal(diagnostics[0].contextBytes, Buffer.byteLength("diff-secret-content", "utf8"));
+  assert.equal(diagnostics[2].status, 200);
+  assert.equal(typeof diagnostics[2].elapsedMs, "number");
+  assert.equal(typeof diagnostics[3].responseBytes, "number");
+
+  const serialized = JSON.stringify(diagnostics);
+  assert.doesNotMatch(serialized, /diagnostic-secret-key/);
+  assert.doesNotMatch(serialized, /diff-secret-content/);
+  assert.doesNotMatch(serialized, /生成敏感标题/);
+});
+
+test("LLM timeout diagnostics report the stage where the request stalled", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "git-ui-pro-llm-"));
+  const diagnostics = [];
+  const service = new LlmService(directory, {
+    credentialCrypto: fakeCrypto(),
+    timeoutMs: 10,
+    diagnosticLogger: {
+      log: (event, details) => diagnostics.push({ event, ...details })
+    },
+    fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    })
+  });
+  await service.saveSettings({ baseUrl: "https://api.example.com/v1", model: "model", apiKey: "key" });
+
+  await assert.rejects(
+    () => service.generateCommitMessage(
+      { scope: "staged", content: "patch", truncated: false, fileCount: 1 },
+      "timeout-request"
+    ),
+    /超时/
+  );
+
+  assert.deepEqual(diagnostics.map((entry) => entry.event), [
+    "request_started",
+    "attempt_started",
+    "request_timed_out"
+  ]);
+  assert.equal(diagnostics.at(-1).stage, "awaiting_response_headers");
+  assert.equal(diagnostics.at(-1).attempt, 1);
 });
 
 test("LLM request errors are bounded and never include credentials or response bodies", async () => {
@@ -389,7 +485,9 @@ test("Electron bridge exposes the complete LLM IPC surface and builds context in
     assert.match(preloadSource, new RegExp(`ipcRenderer\\.invoke\\(\\\"${channel.replace(":", "\\:")}\\\"`));
   }
   assert.match(mainSource, /gitService\.getCommitMessageContext\(repositoryPath\)/);
-  assert.match(mainSource, /llmService\.generateCommitMessage\(context\)/);
+  assert.match(mainSource, /llmDiagnosticLogger\.log\("context_build_started"/);
+  assert.match(mainSource, /llmDiagnosticLogger\.log\("context_build_succeeded"/);
+  assert.match(mainSource, /llmService\.generateCommitMessage\(context, requestId\)/);
 });
 
 test("merge into current branch keeps HEAD on the current branch and merges the selected source", async () => {
