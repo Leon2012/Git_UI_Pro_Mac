@@ -25,6 +25,28 @@ async function openFirstWorktreeFile(page: Page) {
   await expect(page.locator(".editor-detail-panel:not(.empty)")).toBeVisible();
 }
 
+async function openBranchRail(page: Page) {
+  const rail = page.getByRole("complementary", { name: "分支" });
+  const expandButton = rail.getByRole("button", { name: "展开分支栏" });
+  if (await expandButton.isVisible()) {
+    await expandButton.click();
+  }
+  await expect(rail.getByRole("heading", { name: "分支", exact: true })).toBeVisible();
+  await expect(rail.getByRole("button", { name: /^本地分支 [1-9]\d*$/ })).toBeVisible();
+  return rail;
+}
+
+async function openExpandedBranchRail(page: Page) {
+  const rail = await openBranchRail(page);
+  for (const title of ["本地分支", "远程分支"]) {
+    const toggle = rail.getByRole("heading", { name: title }).locator("..");
+    if (await toggle.getAttribute("aria-expanded") !== "true") {
+      await toggle.click();
+    }
+  }
+  return rail;
+}
+
 async function createWordPreviewDataUrl() {
   const archive = new JSZip();
   archive.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -202,11 +224,15 @@ test("偏好设置可配置、测试并清除 OpenAI 兼容 LLM", async ({ page 
 test("主界面在项目与更改之间显示独立分支栏", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openBranchRail(page);
   await expect(rail).toBeVisible();
   await expect(rail.getByRole("heading", { name: "分支", exact: true })).toBeVisible();
-  await expect(rail.getByRole("heading", { name: "本地分支" })).toBeVisible();
-  await expect(rail.getByRole("heading", { name: "远程分支" })).toBeVisible();
+  const localGroupToggle = rail.getByRole("heading", { name: "本地分支" }).locator("..");
+  const remoteGroupToggle = rail.getByRole("heading", { name: "远程分支" }).locator("..");
+  await expect(localGroupToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(remoteGroupToggle).toHaveAttribute("aria-expanded", "false");
+  await localGroupToggle.click();
+  await remoteGroupToggle.click();
   await expect(rail.locator('[data-branch-name="master"]')).toHaveAttribute("data-current", "true");
   await expect(rail.locator('[data-branch-name="feature/project-scan"]')).toBeVisible();
   await expect(rail.locator('[data-branch-name="origin/master"]')).toBeVisible();
@@ -219,7 +245,7 @@ test("主界面在项目与更改之间显示独立分支栏", async ({ page }) 
 test("分支路径树按斜线递归显示本地与远程分支", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
 
   const localFeature = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button');
   await expect(localFeature).toBeVisible();
@@ -250,13 +276,13 @@ test("分支路径树按斜线递归显示本地与远程分支", async ({ page 
 
   const localSection = rail.getByRole("heading", { name: "本地分支" }).locator("../..");
   const topLevelOrder = await localSection.locator(":scope > .branch-group-items > .branch-row, :scope > .branch-group-items > .branch-path-folder").evaluateAll((elements) => elements.map((element) => element.getAttribute("data-branch-name") ?? element.getAttribute("data-branch-path")));
-  expect(topLevelOrder.slice(0, 4)).toEqual(["master", "feature", "origin", "deep"]);
+  expect(topLevelOrder.slice(0, 4)).toEqual(["deep", "feature", "master", "origin"]);
 });
 
 test("分支路径树的本地与远程折叠状态相互隔离且保留键盘焦点", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
   const localOrigin = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="origin"] > button');
   const remoteOrigin = rail.locator('.branch-path-folder[data-branch-scope="remote"][data-branch-path="origin"] > button');
 
@@ -275,7 +301,7 @@ test("分支路径树的本地与远程折叠状态相互隔离且保留键盘�
 test("分支路径树为合法碰撞路径生成唯一控制 ID", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
   const first = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature/1u4l0kuqet"] > button');
   const second = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature/1g59h76y6h"] > button');
   const firstId = await first.getAttribute("aria-controls");
@@ -290,7 +316,7 @@ test("分支路径树为合法碰撞路径生成唯一控制 ID", async ({ page 
 test("分支路径树使用清晰留白、层级引导线和稳定尺寸", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
   const feature = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button');
   const ui = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature/ui"] > button');
   const longFolder = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature/this-is-a-very-long-folder-name"] > button');
@@ -373,7 +399,7 @@ test("分支路径树使用清晰留白、层级引导线和稳定尺寸", async
 test("分支树搜索临时展开顶层组和路径并在清空后恢复折叠", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
   const localGroupToggle = rail.getByRole("heading", { name: "本地分支" }).locator("..");
   const localFeature = rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button');
 
@@ -400,7 +426,7 @@ test("分支树搜索临时展开顶层组和路径并在清空后恢复折叠",
 test("分支树项目切换会重置搜索选择和折叠状态", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
   const search = rail.getByRole("searchbox", { name: "搜索分支" });
   const localGroupToggle = rail.getByRole("heading", { name: "本地分支" }).locator("..");
   await rail.locator('[data-branch-name="feature/ui/menu-contrast"]').click();
@@ -410,14 +436,16 @@ test("分支树项目切换会重置搜索选择和折叠状态", async ({ page 
 
   await page.getByText("Order Platform", { exact: true }).click();
   await expect(search).toHaveValue("");
-  await expect(rail.getByRole("heading", { name: "本地分支" }).locator("..")).toHaveAttribute("aria-expanded", "true");
-  await expect(rail.locator('[data-branch-name="release/2.4"]')).not.toHaveClass(/selected/);
+  await expect(rail.getByRole("button", { name: /^本地分支 [1-9]\d*$/ })).toBeVisible();
+  await expect(rail.getByRole("heading", { name: "本地分支" }).locator("..")).toHaveAttribute("aria-expanded", "false");
+  await expect(rail.locator('[data-branch-name="release/2.4"]')).toHaveCount(0);
 
   await page.getByText("Git UI Pro", { exact: true }).click();
   await expect(search).toHaveValue("");
-  await expect(localGroupToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button')).toHaveAttribute("aria-expanded", "true");
-  await expect(rail.locator('[data-branch-name="feature/ui/menu-contrast"]')).not.toHaveClass(/selected/);
+  await expect(rail.getByRole("button", { name: /^本地分支 [1-9]\d*$/ })).toBeVisible();
+  await expect(localGroupToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(rail.locator('.branch-path-folder[data-branch-scope="local"][data-branch-path="feature"] > button')).toHaveCount(0);
+  await expect(rail.locator('[data-branch-name="feature/ui/menu-contrast"]')).toHaveCount(0);
 });
 
 test("分支树操作保留完整名称和远程分解参数", async ({ page }) => {
@@ -467,7 +495,7 @@ test("分支树操作保留完整名称和远程分解参数", async ({ page }) 
     } as unknown as typeof window.gitUI;
   });
 
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
   const localRow = rail.locator('[data-branch-name="feature/ui/menu-contrast"][data-branch-type="local"]');
   const localMenuTrigger = localRow.getByRole("button", { name: "feature/ui/menu-contrast 分支操作" });
 
@@ -475,7 +503,7 @@ test("分支树操作保留完整名称和远程分解参数", async ({ page }) 
   await expect.poll(async () => page.evaluate(() => (window as typeof window & { __branchActionCalls?: unknown[] }).__branchActionCalls?.length ?? 0)).toBe(1);
 
   await localMenuTrigger.click();
-  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "合并到当前分支" }).click();
+  await page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "合并到当前分支（master）" }).click();
   await page.getByRole("button", { name: "开始合并" }).click();
 
   await localMenuTrigger.click();
@@ -530,7 +558,7 @@ test("分支栏顶部快捷操作使用当前多级分支执行获取拉取推�
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
   await page.getByText("Order Platform", { exact: true }).click();
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
   await expect(rail.locator('[data-branch-name="release/2.4"]')).toBeVisible();
 
   await page.evaluate(() => {
@@ -580,7 +608,7 @@ test("分支栏顶部快捷操作使用当前多级分支执行获取拉取推�
 test("分支栏顶部快捷操作跟随选中分支并限制非当前分支拉取推送", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
 
   await rail.locator('[data-branch-name="feature/project-scan"] .branch-row-main').click();
 
@@ -593,7 +621,8 @@ test("分支栏顶部快捷操作跟随选中分支并限制非当前分支拉�
 test("分支搜索框只由外层容器绘制边框", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const search = page.getByRole("complementary", { name: "分支" }).getByRole("searchbox", { name: "搜索分支" });
+  const rail = await openExpandedBranchRail(page);
+  const search = rail.getByRole("searchbox", { name: "搜索分支" });
   const styles = await search.evaluate((element) => {
     const style = getComputedStyle(element);
     return {
@@ -638,7 +667,7 @@ test("右侧项目布局按拖拽方向调整分支栏宽度", async ({ page }) 
   await dialog.getByRole("button", { name: "保存设置" }).click();
   await dialog.getByRole("button", { name: "关闭仓库中心" }).click();
 
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
   const handle = page.locator(".branch-rail-resize");
   const initialWidth = (await rail.boundingBox())?.width ?? 0;
   const box = await handle.boundingBox();
@@ -653,7 +682,7 @@ test("右侧项目布局按拖拽方向调整分支栏宽度", async ({ page }) 
 test("分支右键菜单按当前、本地和远程分支动态显示操作", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
 
   await rail.locator('[data-branch-name="master"]').click({ button: "right" });
   let menu = page.getByRole("menu", { name: "分支操作" });
@@ -665,7 +694,7 @@ test("分支右键菜单按当前、本地和远程分支动态显示操作", as
   await rail.locator('[data-branch-name="feature/project-scan"]').click({ button: "right" });
   menu = page.getByRole("menu", { name: "分支操作" });
   await expect(menu.getByRole("menuitem", { name: "切换到此分支" })).toBeVisible();
-  await expect(menu.getByRole("menuitem", { name: "合并到当前分支" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "合并到当前分支（master）" })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "变基到此分支" })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "重命名" })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "删除本地分支" })).toBeVisible();
@@ -675,14 +704,14 @@ test("分支右键菜单按当前、本地和远程分支动态显示操作", as
   menu = page.getByRole("menu", { name: "分支操作" });
   await expect(menu.getByRole("menuitem", { name: "创建跟踪分支" })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "获取 origin" })).toBeVisible();
-  await expect(menu.getByRole("menuitem", { name: "合并到当前分支" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "合并到当前分支（master）" })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "删除远程分支" })).toBeVisible();
 });
 
 test("macOS 分支菜单高亮使用系统蓝色而不是根主题浅色", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
 
   await rail.locator('[data-branch-name="master"]').click({ button: "right" });
   const fetchItem = page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "获取" });
@@ -700,7 +729,7 @@ test("macOS 分支菜单高亮使用系统蓝色而不是根主题浅色", async
 test("macOS 分支菜单禁用项悬停时保持灰态", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const rail = page.getByRole("complementary", { name: "分支" });
+  const rail = await openExpandedBranchRail(page);
 
   await rail.locator('[data-branch-name="master"]').click({ button: "right" });
   const pullItem = page.getByRole("menu", { name: "分支操作" }).getByRole("menuitem", { name: "拉取" });
@@ -722,7 +751,8 @@ test("macOS 分支菜单禁用项悬停时保持灰态", async ({ page }) => {
 test("分支省略号菜单支持键盘导航并在关闭后恢复焦点", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 800 });
   await openApp(page, "macos");
-  const trigger = page.getByRole("button", { name: "feature/project-scan 分支操作" });
+  const rail = await openExpandedBranchRail(page);
+  const trigger = rail.getByRole("button", { name: "feature/project-scan 分支操作" });
   await trigger.focus();
   await page.keyboard.press("Enter");
 
@@ -1113,6 +1143,7 @@ test("标题栏常驻居中显示当前项目名称", async ({ page }) => {
 
 test("macOS 平台使用原生标题栏安全区并驱动菜单命令状态", async ({ page }) => {
   await openApp(page, "macos");
+  await openExpandedBranchRail(page);
   const shell = page.locator(".app-shell.platform-macos");
   await expect(shell).toHaveClass(/theme-light/);
   await expect(page.locator(".app-chrome-traffic-light-safe-zone")).toBeVisible();
@@ -1590,6 +1621,7 @@ test("窄屏文件对比在项目栏和分支栏收起后返回左右布局", as
   await page.goto("/");
   const modifiedFile = page.locator(".scm-file-row").filter({ hasText: "App.tsx" }).first();
   await expect(modifiedFile).toBeVisible();
+  await openExpandedBranchRail(page);
   await modifiedFile.click();
 
   const diffPanel = page.locator(".editor-diff-panel");

@@ -50,6 +50,8 @@ interface BranchMenuItem {
 
 type BranchPathScope = "local" | "remote";
 
+const branchNameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+
 export interface BranchPathFolder {
   kind: "folder";
   key: string;
@@ -131,10 +133,16 @@ export function resolveBranchRailItems(branches: BranchInfo[], remotes: GitRemot
       remoteName,
       remoteBranchName: remoteName ? branch.name.slice(remoteName.length + 1) : undefined
     };
-  });
+  }).sort(compareBranchRailItems);
 }
 
-export function branchMenuItems(branch: BranchRailItem): BranchMenuItem[] {
+export function compareBranchRailItems(left: BranchRailItem, right: BranchRailItem): number {
+  return branchNameCollator.compare(left.name, right.name)
+    || branchNameCollator.compare(left.fullName, right.fullName);
+}
+
+export function branchMenuItems(branch: BranchRailItem, currentBranchName?: string): BranchMenuItem[] {
+  const mergeIntoCurrentLabel = currentBranchName ? `合并到当前分支（${currentBranchName}）` : "合并到当前分支";
   if (branch.current) {
     return [
       { action: "fetch", label: "获取" },
@@ -146,7 +154,7 @@ export function branchMenuItems(branch: BranchRailItem): BranchMenuItem[] {
   if (branch.type === "local") {
     return [
       { action: "switch", label: "切换到此分支" },
-      { action: "merge-into-current", label: "合并到当前分支" },
+      { action: "merge-into-current", label: mergeIntoCurrentLabel },
       { action: "rebase-onto", label: "变基到此分支" },
       { action: "rename", label: "重命名" },
       { action: "delete-local", label: "删除本地分支", danger: true }
@@ -155,7 +163,7 @@ export function branchMenuItems(branch: BranchRailItem): BranchMenuItem[] {
   return [
     { action: "track-remote", label: "创建跟踪分支", disabled: !branch.remoteName },
     { action: "fetch-remote", label: `获取 ${branch.remoteName ?? "远端"}`, disabled: !branch.remoteName },
-    { action: "merge-into-current", label: "合并到当前分支" },
+    { action: "merge-into-current", label: mergeIntoCurrentLabel },
     { action: "delete-remote", label: "删除远程分支", danger: true, disabled: !branch.remoteName || !branch.remoteBranchName }
   ];
 }
@@ -172,14 +180,16 @@ export function BranchRail({
 }: BranchRailProps) {
   const [query, setQuery] = useState("");
   const [selectedBranch, setSelectedBranch] = useState("");
-  const [localOpen, setLocalOpen] = useState(true);
-  const [remoteOpen, setRemoteOpen] = useState(true);
+  const [localOpen, setLocalOpen] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
   const [menu, setMenu] = useState<BranchMenuState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleBranches = useMemo(() => branches.filter((branch) => !normalizedQuery
-    || `${branch.name} ${branch.upstream ?? ""}`.toLocaleLowerCase().includes(normalizedQuery)), [branches, normalizedQuery]);
+  const visibleBranches = useMemo(() => branches
+    .filter((branch) => !normalizedQuery
+      || `${branch.name} ${branch.upstream ?? ""}`.toLocaleLowerCase().includes(normalizedQuery))
+    .sort(compareBranchRailItems), [branches, normalizedQuery]);
   const localBranches = visibleBranches.filter((branch) => branch.type === "local");
   const remoteBranches = visibleBranches.filter((branch) => branch.type === "remote");
   const localTree = useMemo(() => buildBranchPathTree(localBranches, "local"), [localBranches]);
@@ -187,6 +197,7 @@ export function BranchRail({
   const searchActive = normalizedQuery.length > 0;
   const toolbarBranch = branches.find((branch) => branch.fullName === selectedBranch)
     ?? branches.find((branch) => branch.current);
+  const currentBranchName = branches.find((branch) => branch.current)?.name;
   const toolbarBranchLabel = toolbarBranch?.name ?? "当前分支";
   const toolbarBusy = Boolean(busyAction);
   const toolbarUsesCurrentLocalBranch = toolbarBranch?.type === "local" && toolbarBranch.current;
@@ -220,7 +231,7 @@ export function BranchRail({
     event.preventDefault();
     event.stopPropagation();
     const width = 210;
-    const height = branchMenuItems(branch).length * 32 + 12;
+    const height = branchMenuItems(branch, currentBranchName).length * 32 + 12;
     setSelectedBranch(branch.fullName);
     setMenu({
       branch,
@@ -308,7 +319,7 @@ export function BranchRail({
       </div>
       {menu && typeof document !== "undefined" ? createPortal(
         <div className="branch-context-menu floating-menu" role="menu" aria-label="分支操作" ref={menuRef} style={{ top: menu.top, left: menu.left }} onKeyDown={handleMenuKeyDown}>
-          {branchMenuItems(menu.branch).map((item) => (
+          {branchMenuItems(menu.branch, currentBranchName).map((item) => (
             <button
               key={item.action}
               type="button"

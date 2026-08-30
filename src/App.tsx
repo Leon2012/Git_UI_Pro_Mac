@@ -182,7 +182,7 @@ export function App() {
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => readThemeMode());
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => resolveTheme(readThemeMode()));
   const [sidebarWidth, setSidebarWidth] = useState(240);
-  const [branchRailWidth, setBranchRailWidth] = useState(210);
+  const [branchRailWidth, setBranchRailWidth] = useState(240);
   const [branchRailCollapsed, setBranchRailCollapsed] = useState(false);
   const [branchRailBranches, setBranchRailBranches] = useState<BranchRailItem[]>([]);
   const [branchRailLoading, setBranchRailLoading] = useState(false);

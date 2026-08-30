@@ -4805,15 +4805,8 @@ function compareFiles(left: ChangedFile, right: ChangedFile): number {
 }
 
 function compareBranches(left: BranchInfo, right: BranchInfo): number {
-  if (left.current !== right.current) {
-    return left.current ? -1 : 1;
-  }
-
-  if (left.type !== right.type) {
-    return left.type === "local" ? -1 : 1;
-  }
-
-  return left.name.localeCompare(right.name, "zh-CN", { sensitivity: "base" });
+  return left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" })
+    || left.fullName.localeCompare(right.fullName, "zh-CN", { numeric: true, sensitivity: "base" });
 }
 
 function compareHistoryRefs(left: GitHistoryRef, right: GitHistoryRef): number {
