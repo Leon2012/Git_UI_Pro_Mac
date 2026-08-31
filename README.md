@@ -1,143 +1,180 @@
-# Git UI Pro
+# Git UI Pro for macOS
 
-中文桌面 Git 可视化管理软件，面向需要同时维护多个本地 Git 仓库的开发者。
+面向 macOS 的中文 Git 桌面客户端，提供项目管理、分支操作、提交图、文件差异和常用 Git 工作流。
 
-Git UI Pro 不重新实现 Git 内核，所有仓库操作都调用用户本机的 `git` 命令。它的目标是把项目管理、工作区改动、提交图、分支状态、提交详情和文件 diff 做成更清晰的中文桌面界面。
+## 致谢
 
-## 界面预览
+本项目基于 [zjx150504-lgtm/Git_UI_Pro](https://github.com/zjx150504-lgtm/Git_UI_Pro) 开发。
 
-### 主工作区：项目、提交图与文件差异
+感谢原作者完成 Git UI Pro 的产品设计、核心功能和开源工作。本版本在原项目基础上适配 macOS，并继续扩展分支管理和 LLM 辅助提交能力。
 
-![Git UI Pro 主工作区，展示多项目管理、提交图和文件差异](docs/images/screenshots/workspace-overview.png)
+## 本版本新增功能
 
-### 提交图与 Git 操作
+### macOS arm64 适配
 
-![Git UI Pro 提交图操作菜单与文件内容预览](docs/images/screenshots/commit-graph-actions.png)
+- 将原有 Windows 版本适配为 macOS arm64 版本。
+- 使用 macOS 原生窗口交通灯、系统菜单和应用图标。
+- 增加 macOS 环境校验、DMG/ZIP 打包、产物验证和界面 smoke test。
+- 支持签名后安装到 `/Applications/Git UI Pro.app`。
 
-### 远程仓库连接
+当前 macOS 构建仅支持 Apple Silicon arm64，不支持跨架构构建。
 
-![Git UI Pro 通过 SSH 添加远程服务器仓库](docs/images/screenshots/remote-repository-connection.png)
+### 主界面分支窗口
 
-### 版本更新与安全回退
+- 在主界面增加独立分支窗口。
+- 分开展示本地分支和远程分支。
+- 支持搜索、折叠多级分支路径和查看当前分支状态。
+- 保留切换、拉取、推送、合并、变基和分支管理入口。
 
-![Git UI Pro 版本更新、历史版本与安全回退界面](docs/images/screenshots/version-update-and-rollback.png)
+### LLM 生成 Git Commit Message
 
-### 发布控制台
+- 根据暂存区或工作区变更生成提交信息。
+- 默认生成 `type(scope): 中文摘要` 格式的 Conventional Commit 标题。
+- 支持配置 OpenAI 兼容接口、模型和 API Key。
+- 使用系统安全存储保护 API Key，诊断日志不记录凭据和代码内容。
 
-![Git UI Pro 发布控制台，展示版本规划、双远端发布进度、实时日志和历史版本](docs/images/screenshots/release-console.png)
+## macOS 界面截图
 
-### 仓库中心与分支管理
+### 主界面与分支窗口
 
-![Git UI Pro 仓库中心的分支管理界面](docs/images/screenshots/repository-center-branches.png)
+![Git UI Pro macOS 主界面，展示项目列表、分支窗口、变更列表和提交图](docs/images/mac/Snipaste_2026-08-31_17-16-08.png)
 
-### 深色主题与提交详情
+### LLM 生成提交信息
 
-![Git UI Pro 深色主题下的提交图、提交详情和文件差异](docs/images/screenshots/dark-theme-commit-details.png)
+![Git UI Pro 正在根据当前 Git 变更生成提交信息](docs/images/mac/Snipaste_2026-08-31_17-16-18.png)
 
-## 功能特性
+### 后台 Git 任务
 
-- 多项目管理：添加、扫描、搜索、收藏、分组和切换本地 Git 仓库。
-- 远程项目：通过 SSH 连接服务器仓库，并可按项目暂停远程连接。
-- 源代码管理：查看暂存区和未暂存改动，支持 stage、unstage、discard、commit 和 amend。
-- 提交图：展示提交历史、主线、合并线、本地分支、远程分支、tag 和 HEAD。
-- 提交详情：查看提交元信息、变更文件列表和 inline diff。
-- 仓库中心：集中管理分支、远程仓库、标签、工作树、子模块、Git LFS 和项目设置。
-- 分支操作：查看、新建、切换、合并和删除本地分支，并支持从指定提交创建分支。
-- 远程同步：支持 fetch、pull、push，以及无 upstream 分支的推送引导。
-- 控制台：在当前项目目录中打开辅助终端。
-- 发布控制台：规划语义化版本、记录发布说明、构建 Windows 安装版与 Portable，并跟踪 Gitee 与 GitHub 双远端发布进度。
-- 版本更新：Windows 安装版与 Portable 均支持检查、下载和应用新版本，并可查看历史版本和选择安全回退目标。
-- 外观主题：支持明亮、深色主题和完全收起的项目侧栏。
-- 中文反馈：Git 操作成功、失败、危险操作确认和原始输出查看都使用中文界面。
+![Git UI Pro 执行 Git 拉取任务并展示后台任务状态](docs/images/mac/Snipaste_2026-08-31_17-16-29.png)
 
-## 系统要求
+## 环境要求
 
-- Windows、macOS 或 Linux 桌面系统。
-- Node.js 20 及以上，用于本地开发和打包。
-- Git 2.x，且 `git` 命令可在系统 PATH 中访问。
+- Apple Silicon Mac，运行 macOS arm64。
+- Node.js 20 或更高版本。
+- npm，与仓库中的 `package-lock.json` 配套使用。
+- Git 2.x，且 `git` 命令已加入 `PATH`。
+- 安装正式应用时，需要有效的 macOS codesigning identity。
 
-## 安装
+## 开发运行
 
-正式版本会通过 GitHub 和 Gitee Releases 发布：
-
-- GitHub: <https://github.com/zjx150504-lgtm/Git_UI_Pro/releases>
-- Gitee（国内下载）: <https://gitee.com/zjx_master/git-ui-pro/releases>
-
-Windows x64 发行版提供两种形式：
-
-- `Git-UI-Pro-Setup-<版本号>-x64.exe`：安装版，带安装向导、快捷方式和卸载入口。
-- `Git-UI-Pro-Portable-<版本号>-x64.exe`：便携版，无需安装，项目配置默认保存在程序旁边的 `Git-UI-Pro-Data` 目录。
-
-两种 Windows 正式版都支持应用内更新，并优先使用 Gitee 国内更新源、失败后回退 GitHub。Portable 更新会在退出后替换自身；新版本未能正常启动时会自动恢复上一版本。
-
-当前项目仍处于早期版本。如果 Releases 中还没有安装包，可以在 GitHub Actions 的 `Build Installers` 工作流中下载对应系统的 artifacts。
-
-## 本地开发
+安装锁定版本的依赖：
 
 ```bash
-npm install
+npm ci
+```
+
+启动 Vite、Electron TypeScript 监听和桌面应用：
+
+```bash
 npm run dev
 ```
 
-常用命令：
+仅启动浏览器渲染界面：
 
 ```bash
 npm run dev:web
-npm run typecheck
-npm run build
-npm run release:win
-npm run dist:win
-npm run dist:linux
-npm run dist:mac
 ```
 
-更多打包说明见 [docs/PACKAGING.md](docs/PACKAGING.md)。
+浏览器地址为 <http://127.0.0.1:5173>。浏览器模式使用模拟数据，不执行真实桌面 Git 操作。
 
-## 发布流程
+## 编译与检查
 
-推荐运行本地发布控制台：
+执行 TypeScript 严格检查：
 
 ```bash
-npm run release:win
+npm run typecheck
 ```
 
-控制台会显示当前版本、推荐版本和历史 tag，并完成版本文件更新、Windows 打包、规范化版本提交、tag 以及 Gitee/GitHub 双远端推送。GitHub 收到 tag 后会自动执行多平台构建、创建 Release，并在配置 `GITEE_TOKEN` 后同步国内更新资产。详细约束和失败恢复方式见 [docs/PACKAGING.md](docs/PACKAGING.md)。
+编译 Electron 主进程和 Vite 渲染进程：
 
-需要手动发布时：
+```bash
+npm run build
+```
 
-1. 确认本地校验通过：
+运行完整 Node 测试：
 
-   ```bash
-   npm run typecheck
-   npm run build
-   ```
+```bash
+npm test
+```
 
-2. 推送代码到 GitHub 和 Gitee。
+运行 Playwright 界面测试：
 
-3. 创建并推送 `v*` 格式 tag，例如：
+```bash
+npm run test:ui
+```
 
-   ```bash
-   git tag v0.1.0
-   git push github v0.1.0
-   git push origin v0.1.0
-   ```
+## 构建 macOS 安装包
 
-4. GitHub Actions 会自动构建 Windows、Linux 安装包，在 tag 触发时创建 GitHub Release，并同步 Gitee 国内更新源。
+先确认当前主机和 Node 运行时都是 arm64：
 
-## 隐私说明
+```bash
+npm run verify:macos
+```
 
-Git UI Pro 默认只读取和操作用户主动添加的本地 Git 仓库。远程同步行为由用户仓库中的 Git remote 配置决定，软件不会额外上传仓库内容、文件路径或凭据信息。
+生成 macOS arm64 DMG 和 ZIP：
+
+```bash
+npm run dist:mac -- --publish never
+```
+
+默认产物写入 `release/`。构建命令不会自动发布文件。
+
+运行构建、产物校验和原生界面 smoke test：
+
+```bash
+make macos-arm64
+```
+
+该命令使用隔离的临时输出目录，并在完成后打印产物路径。
+
+## 安装到 Applications
+
+查看本机可用的代码签名身份：
+
+```bash
+security find-identity -v -p codesigning
+```
+
+使用钥匙串中的第一个有效身份完成构建、签名和安装：
+
+```bash
+make install
+```
+
+需要指定签名身份时：
+
+```bash
+MAC_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make install
+```
+
+安装目标为 `/Applications/Git UI Pro.app`。脚本会先验证签名，再替换现有应用。
+
+## 常用命令
+
+| 命令 | 用途 |
+| --- | --- |
+| `make help` | 查看 Makefile 提供的全部入口 |
+| `make install-deps` | 使用 `npm ci` 安装依赖 |
+| `make dev` | 启动 Electron 开发模式 |
+| `make build` | 编译主进程和渲染进程 |
+| `make test` | 运行完整 Node 测试 |
+| `make test-ui` | 运行 Playwright 界面测试 |
+| `make dist-mac` | 生成 macOS arm64 DMG 和 ZIP |
+| `make macos-arm64` | 构建、验证并 smoke-test macOS 包 |
+| `make install` | 签名并安装应用到 `/Applications` |
+
+更多打包与发布细节见 [docs/PACKAGING.md](docs/PACKAGING.md)。
+
+## 隐私
+
+Git UI Pro 只操作用户主动添加的仓库。远程操作遵循仓库现有的 Git remote 配置。
 
 详细说明见 [docs/PRIVACY.md](docs/PRIVACY.md)。
 
 ## 贡献
 
-欢迎通过 Issue 和 Pull Request 反馈问题或改进项目。提交代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+提交代码前，请运行类型检查和相关测试。贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可证
 
-本项目基于 [MIT License](LICENSE) 开源。
-
-## 社区致谢
-
-本项目认可并感谢 [LINUX DO](https://linux.do/) 开源社区为开发者提供交流、分享和互助的平台。
+本项目沿用原项目的 [MIT License](LICENSE)。
