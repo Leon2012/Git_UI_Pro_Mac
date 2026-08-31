@@ -3,6 +3,7 @@ dist/
 dist-electron/
 release/
 release-arm64/
+release-arm64-*/
 .vite/
 test-results/
 playwright-report/
