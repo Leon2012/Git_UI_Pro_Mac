@@ -6,6 +6,7 @@ import { verifyMacArm64Environment } from "./verify-macos-arm64-environment.mjs"
 
 const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const packageJson = JSON.parse(await readFile(path.join(rootDir, "package.json"), "utf8"));
+const packageLock = JSON.parse(await readFile(path.join(rootDir, "package-lock.json"), "utf8"));
 const macWorkflow = await readFile(
   path.join(rootDir, ".github", "workflows", "build-macos-installer.yml"),
   "utf8",
@@ -22,6 +23,12 @@ test("macOS package targets arm64 only", () => {
   assert.doesNotMatch(packageJson.scripts["dist:mac"], /--x64\b/);
 });
 
+test("package metadata uses version 1.0.0", () => {
+  assert.equal(packageJson.version, "1.0.0");
+  assert.equal(packageLock.version, "1.0.0");
+  assert.equal(packageLock.packages[""].version, "1.0.0");
+});
+
 test("macOS workflow is labeled and uploaded as arm64", () => {
   assert.match(macWorkflow, /name: Build macOS arm64/);
   assert.match(macWorkflow, /runs-on: macos-14/);
@@ -34,6 +41,8 @@ test("local macOS install builds only the unpacked app", () => {
   const installTarget = makefile.match(/^install:\n([\s\S]*?)\n\ndev:/m)?.[1];
   assert.ok(installTarget, "Makefile 必须包含 install 目标");
   assert.match(installTarget, /\$\(NPM\) run dist:mac -- --dir\b/);
+  assert.match(installTarget, /osascript -e 'tell application id "com\.gitui\.pro" to quit'/);
+  assert.match(installTarget, /pgrep -x 'Git UI Pro'/);
 });
 
 test("local macOS install does not require a timestamp server", () => {

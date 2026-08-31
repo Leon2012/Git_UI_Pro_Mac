@@ -101,7 +101,7 @@ function assertNativeMenu(summary) {
   assert.ok(view?.submenu?.some((item) => item.command === "sidebar:toggle"), "视图菜单缺少侧栏命令。");
   assert.ok(file?.submenu?.some((item) => item.role === "close"), "文件菜单缺少关闭窗口 role。");
   assert.ok(window?.submenu?.some((item) => item.role === "minimize"), "窗口菜单缺少最小化 role。");
-  assert.ok(help?.submenu?.some((item) => item.externalLink?.endsWith("/releases")), "帮助菜单缺少版本历史外链。");
+  assert.deepEqual(help?.submenu, [], "帮助菜单不应包含项目主页或版本历史入口。");
 }
 
 async function assertMacChrome(page) {

@@ -39,8 +39,7 @@ test("macOS 菜单描述包含系统角色和受控 renderer 命令", () => {
   assert.equal(findByCommand(descriptor[3].submenu, "theme:dark").type, "radio");
   assert.equal(descriptor[4].submenu.some((item) => item.command), false);
   assert.equal(descriptor[2].submenu.some((item) => item.role === "copy"), true);
-  assert.equal(descriptor[5].submenu.find((item) => item.label === "Git UI Pro 版本历史").externalLink,
-    "https://github.com/zjx150504-lgtm/Git_UI_Pro/releases");
+  assert.deepEqual(descriptor[5].submenu, []);
 });
 
 test("菜单队列按 set、toggle、一次性动作语义合并", () => {

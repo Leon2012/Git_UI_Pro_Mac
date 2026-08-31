@@ -57,11 +57,6 @@ export const macMenuCommandValues: readonly MenuCommand[] = [
   "theme:dark"
 ];
 
-export const macExternalLinks = {
-  homepage: "https://github.com/zjx150504-lgtm/Git_UI_Pro",
-  releases: "https://github.com/zjx150504-lgtm/Git_UI_Pro/releases"
-} as const;
-
 const macMenuCommandSet = new Set<MenuCommand>(macMenuCommandValues);
 const shortcutModifierAliases: Record<string, "ctrl" | "alt" | "shift" | "meta" | "mod"> = {
   ctrl: "ctrl",
@@ -169,10 +164,7 @@ export function createMacMenuDescriptor(options: { isDev?: boolean } = {}): Menu
     },
     {
       label: "帮助",
-      submenu: [
-        { label: "Git UI Pro 项目主页", externalLink: macExternalLinks.homepage },
-        { label: "Git UI Pro 版本历史", externalLink: macExternalLinks.releases }
-      ]
+      submenu: []
     }
   ];
 }

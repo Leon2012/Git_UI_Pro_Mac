@@ -57,6 +57,18 @@ install:
 	test -d "$$app_path"; \
 	codesign --verify --deep --strict --verbose=2 "$$app_path"; \
 	ditto "$$app_path" "$$staging_dir/Git UI Pro.app"; \
+	if pgrep -x 'Git UI Pro' >/dev/null 2>&1; then \
+		printf '%s\n' '[macos-install] stopping the running app before replacement'; \
+		osascript -e 'tell application id "com.gitui.pro" to quit' || true; \
+		for attempt in $$(seq 1 30); do \
+			if ! pgrep -x 'Git UI Pro' >/dev/null 2>&1; then break; fi; \
+			sleep 1; \
+		done; \
+		if pgrep -x 'Git UI Pro' >/dev/null 2>&1; then \
+			printf '%s\n' '[macos-install] running app did not exit; refusing to replace it'; \
+			exit 1; \
+		fi; \
+	fi; \
 	if [ -e "$$target_path" ]; then rm -rf "$$target_path"; fi; \
 	ditto "$$staging_dir/Git UI Pro.app" "$$target_path"; \
 	codesign --verify --deep --strict "$$target_path"; \
