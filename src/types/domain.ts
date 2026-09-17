@@ -216,6 +216,20 @@ export interface LlmCommitMessageResult {
   fileCount: number;
 }
 
+export interface LlmConflictResolutionResult {
+  path: string;
+  content: string;
+  truncated: boolean;
+  token: string;
+}
+
+export interface LlmConflictSuggestion {
+  path: string;
+  content: string;
+  truncated: boolean;
+  token: string;
+}
+
 export interface RepositoryCreationResult {
   result: GitOperationResult;
   project?: GitProject;

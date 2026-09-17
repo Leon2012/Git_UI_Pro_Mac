@@ -28,6 +28,7 @@ import type {
   GitLfsMigrateOptions,
   GitLinkedWorktree,
   LlmCommitMessageResult,
+  LlmConflictResolutionResult,
   LlmConnectionTestInput,
   LlmConnectionTestResult,
   LlmSettingsSummary,
@@ -221,6 +222,7 @@ export interface GitUIBridge {
   clearLlmApiKey: () => Promise<boolean>;
   testLlmConnection: (input: LlmConnectionTestInput) => Promise<LlmConnectionTestResult>;
   generateCommitMessage: (repository: RepositoryTarget) => Promise<LlmCommitMessageResult>;
+  resolveConflictWithLlm: (repository: RepositoryTarget, filePath: string) => Promise<LlmConflictResolutionResult>;
   addProject: (directoryPath: string) => Promise<GitProject>;
   initializeRepository: (directoryPath: string, initialBranch: string, createGitignore: boolean) => Promise<RepositoryCreationResult>;
   cloneRepository: (sourceUrl: string, destinationPath: string, options: GitCloneOptions, operation?: GitLongOperationOptions) => Promise<RepositoryCreationResult>;

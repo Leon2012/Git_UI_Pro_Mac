@@ -10,11 +10,11 @@ import {
   type UIEvent as ReactUIEvent,
   type WheelEvent as ReactWheelEvent
 } from "react";
-import { AlertTriangle, BookOpen, Check, Code2, Copy, ExternalLink, FileText, FolderOpen, GitMerge, Maximize2, RefreshCw, RotateCcw, Save, Table2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, Code2, Copy, ExternalLink, FileText, FolderOpen, GitMerge, Maximize2, RefreshCw, RotateCcw, Save, Sparkles, Table2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { BinaryDocumentPreview, TextDocumentPreview, textReaderKind } from "./DocumentPreview";
 import { DiffMinimap, type DiffMinimapLine } from "./DiffMinimap";
 import { PathTooltip } from "./PathTooltip";
-import type { ChangedFile, ConflictFileDetails, ConflictResolutionInput, DiffLine, FilePreview } from "../types/domain";
+import type { ChangedFile, ConflictFileDetails, ConflictResolutionInput, DiffLine, FilePreview, LlmConflictSuggestion } from "../types/domain";
 import { absoluteFilePath } from "../utils/filePath";
 import { isPrimaryModifierPressed, formatShortcut, type DesktopPlatform } from "../../electron/platformConfig";
 
@@ -29,6 +29,8 @@ export interface WorktreeEditorTab {
   sourceLabel?: string;
   subtitle?: string;
   conflict?: ConflictFileDetails;
+  llmSuggestion?: LlmConflictSuggestion;
+  llmSuggestionBusy?: boolean;
   loading?: boolean;
   loadError?: string;
 }
@@ -574,6 +576,7 @@ interface ParsedConflictBlock {
 function ConflictResolver({ tab, onResolve }: { tab: WorktreeEditorTab; onResolve: WorktreeDetailPanelProps["onResolveConflict"] }) {
   const details = tab.conflict!;
   const initialDraft = conflictInitialDraft(details);
+  const suggestion = tab.llmSuggestion;
   const [draft, setDraft] = useState(initialDraft);
   const [viewMode, setViewMode] = useState<ConflictViewMode>(() => (parseConflictBlocks(initialDraft).length > 0 ? "blocks" : "three-way"));
   const [busy, setBusy] = useState(false);
@@ -591,6 +594,14 @@ function ConflictResolver({ tab, onResolve }: { tab: WorktreeEditorTab; onResolv
     setViewMode(parseConflictBlocks(nextDraft).length > 0 ? "blocks" : "three-way");
     setBusy(false);
   }, [details.token]);
+
+  useEffect(() => {
+    if (!suggestion) {
+      return;
+    }
+    setDraft(suggestion.content);
+    setViewMode("result");
+  }, [suggestion]);
 
   useLayoutEffect(() => {
     const body = bodyScrollRef.current;
@@ -664,23 +675,48 @@ function ConflictResolver({ tab, onResolve }: { tab: WorktreeEditorTab; onResolv
 
   return (
     <section className="conflict-resolver" aria-label={`解决冲突 ${details.path}`}>
-      <header className="conflict-resolver-header">
-        <div className="conflict-resolver-summary">
-          <GitMerge size={17} />
-          <span>
-            <strong>{blocks.length > 0 ? `${blocks.length} 个冲突块` : "冲突内容已合并"}</strong>
-            {initialBlockCount > 0 ? `已处理 ${resolvedBlockCount} / ${initialBlockCount}` : "等待确认最终结果"}
-          </span>
-        </div>
-        <div className="conflict-whole-actions">
-          <button type="button" onClick={() => void resolve({ choice: "current" })} disabled={busy}>
-            采用 {details.currentLabel}{details.currentExists ? "" : "（删除）"}
-          </button>
-          <button type="button" onClick={() => void resolve({ choice: "incoming" })} disabled={busy}>
-            采用 {details.incomingLabel}{details.incomingExists ? "" : "（删除）"}
-          </button>
-        </div>
-      </header>
+      <div className="conflict-resolver-top">
+        <header className="conflict-resolver-header">
+          <div className="conflict-resolver-summary">
+            <GitMerge size={17} />
+            <span>
+              <strong>{blocks.length > 0 ? `${blocks.length} 个冲突块` : "冲突内容已合并"}</strong>
+              {initialBlockCount > 0 ? `已处理 ${resolvedBlockCount} / ${initialBlockCount}` : "等待确认最终结果"}
+            </span>
+          </div>
+          <div className="conflict-whole-actions">
+            <button type="button" onClick={() => void resolve({ choice: "current" })} disabled={busy}>
+              采用 {details.currentLabel}{details.currentExists ? "" : "（删除）"}
+            </button>
+            <button type="button" onClick={() => void resolve({ choice: "incoming" })} disabled={busy}>
+              采用 {details.incomingLabel}{details.incomingExists ? "" : "（删除）"}
+            </button>
+          </div>
+        </header>
+
+        {tab.llmSuggestionBusy ? (
+          <div className="conflict-llm-banner busy" role="status">
+            <Sparkles size={15} />
+            <span>正在通过 LLM 生成合并建议...</span>
+          </div>
+        ) : suggestion ? (
+          <div className="conflict-llm-banner" role="status">
+            <Sparkles size={15} />
+            <span>
+              <strong>LLM 合并建议已填入最终结果</strong>
+              {suggestion.truncated ? "，上下文曾超出长度上限，请重点核对文件末尾" : "，请核对后保存；未写入文件，也未暂存"}
+            </span>
+            <div className="conflict-llm-banner-actions">
+              <button type="button" onClick={() => setDraft(suggestion.content)} disabled={busy || draft === suggestion.content}>
+                采用建议
+              </button>
+              <button type="button" onClick={() => setDraft(initialDraft)} disabled={busy}>
+                还原原始冲突
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
 
       {details.editable ? (
         <>

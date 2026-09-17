@@ -58,6 +58,34 @@ export interface CommitMessageContextInput {
   maxBytes?: number;
 }
 
+export interface ConflictResolutionResult {
+  path: string;
+  content: string;
+  truncated: boolean;
+  token: string;
+}
+
+export interface ConflictResolutionContext {
+  path: string;
+  currentLabel: string;
+  incomingLabel: string;
+  content: string;
+  truncated: boolean;
+  token: string;
+}
+
+export interface ConflictResolutionContextInput {
+  path: string;
+  currentLabel: string;
+  incomingLabel: string;
+  baseContent: string | null;
+  currentContent: string | null;
+  incomingContent: string | null;
+  resultContent: string | null;
+  token: string;
+  maxBytes?: number;
+}
+
 export type LlmDiagnosticEvent =
   | "context_build_started"
   | "context_build_succeeded"
@@ -128,6 +156,15 @@ const COMMIT_SYSTEM_PROMPT = [
   "Write the subject as a concise Simplified Chinese phrase containing at least one Chinese character.",
   "Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.",
   "Return only the title, with no Markdown, quotes, body, explanation, or trailing period."
+].join(" ");
+
+const CONFLICT_SYSTEM_PROMPT = [
+  "Resolve one Git merge conflict and return only the complete merged file content.",
+  "Return raw file content: no Markdown fences, no commentary, no diff markers.",
+  "Never emit conflict markers such as <<<<<<<, |||||||, ======= or >>>>>>>.",
+  "Keep the existing code style, indentation, line endings and trailing newline of the file.",
+  "Preserve every unrelated line of both sides and only merge the conflicting regions.",
+  "When both sides changed the same logic in incompatible ways, integrate both intents if possible; otherwise keep the side that preserves the surrounding code's expectations and note nothing in the output."
 ].join(" ");
 
 const noopDiagnosticLogger: Pick<LlmDiagnosticLogger, "log"> = {
@@ -274,6 +311,34 @@ export class LlmService {
     };
   }
 
+  async resolveConflict(
+    context: ConflictResolutionContext,
+    requestId = randomUUID()
+  ): Promise<ConflictResolutionResult> {
+    const settings = await this.loadStore();
+    const normalizedUrl = normalizeLlmBaseUrl(settings.baseUrl);
+    const model = requireModel(settings.model);
+    const apiKey = await this.getApiKeyForRequest();
+    const content = await this.requestChatCompletion(normalizedUrl.endpoint, model, apiKey, [
+      { role: "system", content: CONFLICT_SYSTEM_PROMPT },
+      { role: "user", content: context.content }
+    ], {
+      requestId,
+      operation: "conflict_resolution",
+      contextBytes: Buffer.byteLength(context.content, "utf8"),
+      contextFiles: 1,
+      contextTruncated: context.truncated
+    }, {
+      maxTokens: conflictMaxOutputTokens(context.content)
+    });
+    return {
+      path: context.path,
+      content: parseConflictResolutionResponse(content),
+      truncated: context.truncated,
+      token: context.token
+    };
+  }
+
   private async requestChatCompletion(
     endpoint: string,
     model: string,
@@ -281,12 +346,13 @@ export class LlmService {
     messages: Array<{ role: "system" | "user"; content: string }>,
     diagnostic: {
       requestId: string;
-      operation: "connection_test" | "commit_message";
+      operation: "connection_test" | "commit_message" | "conflict_resolution";
       contextBytes?: number;
       contextFiles?: number;
       contextScope?: CommitMessageContext["scope"];
       contextTruncated?: boolean;
-    }
+    },
+    options: { maxTokens?: number } = {}
   ): Promise<string> {
     const startedAt = Date.now();
     const controller = new AbortController();
@@ -295,7 +361,8 @@ export class LlmService {
       model,
       messages,
       temperature: 0,
-      stream: false
+      stream: false,
+      ...(options.maxTokens ? { max_tokens: options.maxTokens } : {})
     });
     let stage = "preparing_request";
     let attemptCount = 0;
@@ -618,6 +685,79 @@ export function redactSensitiveText(value: string): string {
     .replace(new RegExp(`((?:["']?)${credentialKey}(?:["']?)\\s*[:=]\\s*)(["'])([^\\r\\n]*?)\\2`, "gi"), "$1$2[REDACTED]$2")
     .replace(/(authorization\s*:\s*(?:bearer\s+|basic\s+)?)[^\s\r\n]+/gi, "$1[REDACTED]")
     .replace(new RegExp(`((?:["']?)${credentialKey}(?:["']?)\\s*[:=]\\s*)[^\\s,;\\r\\n]+`, "gi"), "$1[REDACTED]");
+}
+
+export function buildConflictResolutionContext(input: ConflictResolutionContextInput): ConflictResolutionContext {
+  const currentLabel = input.currentLabel.trim() || "当前分支";
+  const incomingLabel = input.incomingLabel.trim() || "传入分支";
+  const result = input.resultContent;
+  const sections = [
+    `Resolve the merge conflict in file: ${sanitizeRepositoryPath(input.path)}`,
+    `Current side (ours) branch: ${sanitizeLabel(currentLabel)}`,
+    `Incoming side (theirs) branch: ${sanitizeLabel(incomingLabel)}`,
+    ""
+  ];
+
+  if (result !== null && containsConflictMarkers(result)) {
+    sections.push(
+      "Conflicted file content with markers (merge this content and return the whole file):",
+      result
+    );
+  } else {
+    sections.push(
+      "The working tree copy has no conflict markers; reconstruct the merged file from the three stages below.",
+      "",
+      "--- Common ancestor (base) ---",
+      input.baseContent ?? "(absent)",
+      "",
+      `--- Current side (ours): ${sanitizeLabel(currentLabel)} ---`,
+      input.currentContent ?? "(absent: the file was deleted on this side)",
+      "",
+      `--- Incoming side (theirs): ${sanitizeLabel(incomingLabel)} ---`,
+      input.incomingContent ?? "(absent: the file was deleted on this side)"
+    );
+  }
+
+  const redacted = redactSensitiveText(sections.join("\n"));
+  const maxBytes = Math.max(Buffer.byteLength(TRUNCATION_MARKER, "utf8") + 1, input.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES);
+  const truncated = Buffer.byteLength(redacted, "utf8") > maxBytes;
+  return {
+    path: input.path,
+    currentLabel,
+    incomingLabel,
+    content: truncated ? truncateUtf8(redacted, maxBytes) : redacted,
+    truncated,
+    token: input.token
+  };
+}
+
+export function parseConflictResolutionResponse(value: string): string {
+  let normalized = value.replace(/\r\n/g, "\n").trim();
+  const codeFence = normalized.match(/^```[a-z0-9+#._-]*[ \t]*\n([\s\S]*?)\n?```$/i);
+  if (codeFence) {
+    normalized = codeFence[1];
+  }
+  normalized = normalized.replace(/^\n+/, "").replace(/\s+$/, "");
+  if (!normalized) {
+    throw new Error("LLM 返回了空的合并结果。");
+  }
+  if (containsConflictMarkers(normalized)) {
+    throw new Error("LLM 返回的合并结果仍包含冲突标记，请重试或手动解决。");
+  }
+  return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
+}
+
+export function containsConflictMarkers(content: string): boolean {
+  return /^<<<<<<<[^\r\n]*\r?$[\s\S]*?^=======\r?$[\s\S]*?^>>>>>>>[^\r\n]*\r?$/m.test(content);
+}
+
+function conflictMaxOutputTokens(context: string): number {
+  const estimated = Math.ceil(Buffer.byteLength(context, "utf8") / 2);
+  return Math.min(8192, Math.max(1024, estimated));
+}
+
+function sanitizeLabel(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").slice(0, 120);
 }
 
 function publicSettings(store: LlmStoreDocument): LlmSettingsSummary {

@@ -777,6 +777,78 @@ test("未配置 LLM 时生成按钮打开并聚焦 LLM 偏好设置", async ({ p
   await expect(dialog.getByLabel("Base URL")).toBeFocused();
 });
 
+async function configureLlm(page: Page) {
+  await page.getByRole("button", { name: "打开仓库中心" }).click();
+  const dialog = page.getByRole("dialog", { name: /git ui pro/i });
+  await dialog.getByRole("button", { name: /偏好设置/ }).click();
+  await dialog.getByLabel("Base URL").fill("http://192.168.0.113:11434/v1");
+  await dialog.getByLabel("Model").fill("deepseek-chat");
+  await dialog.getByLabel("API Key").fill("test-api-key");
+  await dialog.getByRole("button", { name: "保存 LLM 设置" }).click();
+  await expect(dialog.getByText("API Key 已配置")).toBeVisible();
+  await dialog.getByRole("button", { name: "关闭仓库中心" }).click();
+  await expect(dialog).toBeHidden();
+}
+
+async function openConflictProject(page: Page) {
+  await page.getByText("Order Platform", { exact: true }).click();
+  const conflictSection = page.locator(".scm-section").filter({ has: page.getByRole("button", { name: /^冲突/ }) });
+  await expect(conflictSection.locator(".scm-file-row")).toHaveCount(2);
+  return conflictSection;
+}
+
+test("冲突分区提供单个与全部 LLM 解决入口", async ({ page }) => {
+  await openApp(page);
+  const conflictSection = await openConflictProject(page);
+
+  await expect(conflictSection.getByRole("button", { name: "通过 LLM 解决冲突", exact: true })).toHaveCount(2);
+  await expect(conflictSection.getByRole("button", { name: "通过 LLM 解决全部冲突", exact: true })).toBeEnabled();
+  await expect(page.locator(".scm-file-row").filter({ hasText: "config.ts" }).locator(".llm-icon")).toHaveCount(1);
+});
+
+test("通过 LLM 解决单个冲突只填入建议，保存前不写入文件", async ({ page }) => {
+  await openApp(page);
+  await configureLlm(page);
+  await openConflictProject(page);
+
+  await page.locator(".scm-file-row").filter({ hasText: "config.ts" }).getByRole("button", { name: "通过 LLM 解决冲突" }).click();
+
+  const banner = page.locator(".conflict-llm-banner");
+  await expect(banner).toContainText("LLM 合并建议已填入最终结果");
+  await expect(banner).toContainText("未写入文件，也未暂存");
+  await expect(page.locator(".conflict-resolver")).toHaveAttribute("aria-label", "解决冲突 src/config.ts");
+
+  const result = page.getByRole("textbox", { name: "最终合并结果" });
+  await expect(result).toHaveValue('export const resolved = "src/config.ts";\n');
+
+  await banner.getByRole("button", { name: "还原原始冲突" }).click();
+  await expect(result).toContainText("<<<<<<< HEAD");
+  await banner.getByRole("button", { name: "采用建议" }).click();
+  await expect(result).toHaveValue('export const resolved = "src/config.ts";\n');
+});
+
+test("通过 LLM 解决全部冲突逐个生成建议并要求确认", async ({ page }) => {
+  await openApp(page);
+  await configureLlm(page);
+  const conflictSection = await openConflictProject(page);
+
+  await conflictSection.getByRole("button", { name: "通过 LLM 解决全部冲突" }).click();
+
+  const confirm = page.getByRole("alertdialog", { name: "通过 LLM 解决全部冲突？" });
+  await expect(confirm).toBeVisible();
+  await expect(confirm.locator("pre")).toContainText("src/config.ts");
+  await expect(confirm.locator("pre")).toContainText("src/order.ts");
+  await confirm.getByRole("button", { name: "取消" }).click();
+  await expect(page.locator(".conflict-resolver")).toHaveCount(0);
+
+  await conflictSection.getByRole("button", { name: "通过 LLM 解决全部冲突" }).click();
+  await confirm.getByRole("button", { name: "开始生成" }).click();
+
+  await expect(page.locator(".conflict-llm-banner")).toContainText("LLM 合并建议已填入最终结果");
+  await expect(page.locator(".conflict-resolver")).toHaveAttribute("aria-label", "解决冲突 src/order.ts");
+  await expect(page.getByRole("textbox", { name: "最终合并结果" })).toHaveValue('export const resolved = "src/order.ts";\n');
+});
+
 test("LLM 生成提交消息在确认后替换现有草稿且不自动提交", async ({ page }) => {
   await openApp(page);
   await page.getByRole("button", { name: "打开仓库中心" }).click();

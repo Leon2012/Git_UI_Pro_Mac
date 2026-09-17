@@ -11,9 +11,11 @@ const {
   DEFAULT_REQUEST_TIMEOUT_MS,
   LlmService,
   buildCommitMessageContext,
+  buildConflictResolutionContext,
   createLlmDiagnosticLogger,
   normalizeLlmBaseUrl,
-  parseCommitMessageResponse
+  parseCommitMessageResponse,
+  parseConflictResolutionResponse
 } = require("../dist-electron/llmService.js");
 const { GitService, readUntrackedFileForLlm } = require("../dist-electron/gitService.js");
 
@@ -469,8 +471,145 @@ test("LLM requests abort after the configured timeout", async () => {
   );
 });
 
-test("Electron bridge exposes the complete LLM IPC surface and builds context in the main process", async () => {
-  const [mainSource, preloadSource] = await Promise.all([
+test("conflict context prefers the marked working copy and redacts secrets", () => {
+  const context = buildConflictResolutionContext({
+    path: "src/config.ts",
+    currentLabel: "release/2.4",
+    incomingLabel: "feature/invoice-flow",
+    baseContent: "export const mode = \"base\";\n",
+    currentContent: "export const mode = \"release\";\n",
+    incomingContent: "export const mode = \"feature\";\n",
+    resultContent: [
+      "<<<<<<< HEAD",
+      "export const mode = \"release\";",
+      "api_key=top-secret",
+      "=======",
+      "export const mode = \"feature\";",
+      ">>>>>>> feature/invoice-flow"
+    ].join("\n"),
+    token: "token-1"
+  });
+
+  assert.equal(context.path, "src/config.ts");
+  assert.equal(context.token, "token-1");
+  assert.equal(context.truncated, false);
+  assert.match(context.content, /<<<<<<< HEAD/);
+  assert.match(context.content, /feature\/invoice-flow/);
+  assert.doesNotMatch(context.content, /top-secret/);
+  assert.match(context.content, /\[REDACTED\]/);
+});
+
+test("conflict context falls back to three stages when the working copy has no markers", () => {
+  const context = buildConflictResolutionContext({
+    path: "src/order.ts",
+    currentLabel: "main",
+    incomingLabel: "feature/order",
+    baseContent: "base\n",
+    currentContent: "ours\n",
+    incomingContent: null,
+    resultContent: "ours\n",
+    token: "token-2"
+  });
+
+  assert.match(context.content, /Common ancestor/);
+  assert.match(context.content, /Current side \(ours\): main/);
+  assert.match(context.content, /Incoming side \(theirs\): feature\/order/);
+  assert.match(context.content, /deleted on this side/);
+  assert.doesNotMatch(context.content, /<<<<<<</);
+});
+
+test("conflict context truncates by UTF-8 bytes and reports it", () => {
+  const context = buildConflictResolutionContext({
+    path: "big.txt",
+    currentLabel: "main",
+    incomingLabel: "feature",
+    baseContent: null,
+    currentContent: null,
+    incomingContent: null,
+    resultContent: `<<<<<<< HEAD\n${"内容".repeat(200)}\n=======\n${"内容".repeat(200)}\n>>>>>>> feature`,
+    token: "token-3",
+    maxBytes: 240
+  });
+
+  assert.equal(context.truncated, true);
+  assert.ok(Buffer.byteLength(context.content, "utf8") <= 240);
+  assert.match(context.content, /TRUNCATED/);
+});
+
+test("conflict response parser strips fences and rejects marker leftovers", () => {
+  assert.equal(
+    parseConflictResolutionResponse("```ts\nexport const mode = \"release\";\n```"),
+    "export const mode = \"release\";\n"
+  );
+  assert.equal(parseConflictResolutionResponse("const a = 1;"), "const a = 1;\n");
+  assert.equal(parseConflictResolutionResponse("  const a = 1;\n\n"), "const a = 1;\n");
+
+  assert.throws(() => parseConflictResolutionResponse("   "), /空/);
+  assert.throws(
+    () => parseConflictResolutionResponse("<<<<<<< HEAD\na\n=======\nb\n>>>>>>> feature"),
+    /冲突标记/
+  );
+});
+
+test("resolveConflict posts the conflict context and returns content with the snapshot token", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "git-ui-pro-llm-"));
+  const calls = [];
+  const service = new LlmService(directory, {
+    credentialCrypto: fakeCrypto(),
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init.body)) });
+      return jsonResponse({ choices: [{ message: { content: "```ts\nexport const mode = \"release\";\n```" } }] });
+    }
+  });
+  await service.saveSettings({ baseUrl: "https://api.example.com/v1", model: "gpt-4.1", apiKey: "key" });
+
+  const result = await service.resolveConflict({
+    path: "src/config.ts",
+    currentLabel: "release/2.4",
+    incomingLabel: "feature/invoice-flow",
+    content: "Resolve the merge conflict in file: src/config.ts",
+    truncated: false,
+    token: "token-9"
+  }, "conflict-request");
+
+  assert.deepEqual(result, {
+    path: "src/config.ts",
+    content: "export const mode = \"release\";\n",
+    truncated: false,
+    token: "token-9"
+  });
+  assert.equal(calls[0].url, "https://api.example.com/v1/chat/completions");
+  assert.equal(calls[0].body.temperature, 0);
+  assert.equal(calls[0].body.messages[1].content, "Resolve the merge conflict in file: src/config.ts");
+  assert.match(calls[0].body.messages[0].content, /<<<<<<</);
+  assert.ok(calls[0].body.max_tokens >= 1024);
+});
+
+test("conflict resolution context refuses binary, oversized and truncated conflicts", async () => {
+  const service = new GitService();
+  service.loadConflictLabels = async () => ({ currentLabel: "main", incomingLabel: "feature/order" });
+  service.loadConflictSnapshot = async () => ({
+    path: "src/binary.bin",
+    base: null,
+    current: Buffer.from([0x00, 0x01]),
+    incoming: Buffer.from([0x00, 0x02]),
+    result: Buffer.from([0x00, 0x03]),
+    token: "token"
+  });
+  await assert.rejects(() => service.getConflictResolutionContext("/tmp/repo", "src/binary.bin"), /二进制|过大/);
+
+  service.loadConflictSnapshot = async () => ({
+    path: "src/huge.txt",
+    base: null,
+    current: Buffer.from(`${"a".repeat(70 * 1024)}\n`, "utf8"),
+    incoming: Buffer.from("b\n", "utf8"),
+    result: Buffer.from("c\n", "utf8"),
+    token: "token"
+  });
+  await assert.rejects(() => service.getConflictResolutionContext("/tmp/repo", "src/huge.txt"), /64 KB/);
+});
+
+test("Electron bridge exposes the complete LLM IPC surface and builds context in the main process", async () => {  const [mainSource, preloadSource] = await Promise.all([
     readFile(new URL("../electron/main.ts", import.meta.url), "utf8"),
     readFile(new URL("../electron/preload.ts", import.meta.url), "utf8")
   ]);
@@ -479,11 +618,14 @@ test("Electron bridge exposes the complete LLM IPC surface and builds context in
     "llm:saveSettings",
     "llm:clearApiKey",
     "llm:testConnection",
-    "llm:generateCommitMessage"
+    "llm:generateCommitMessage",
+    "llm:resolveConflict"
   ]) {
     assert.match(mainSource, new RegExp(`ipcMain\\.handle\\(\\\"${channel.replace(":", "\\:")}\\\"`));
     assert.match(preloadSource, new RegExp(`ipcRenderer\\.invoke\\(\\\"${channel.replace(":", "\\:")}\\\"`));
   }
+  assert.match(mainSource, /gitService\.getConflictResolutionContext\(repositoryPath, filePath\)/);
+  assert.match(mainSource, /llmService\.resolveConflict\(context, requestId\)/);
   assert.match(mainSource, /gitService\.getCommitMessageContext\(repositoryPath\)/);
   assert.match(mainSource, /llmDiagnosticLogger\.log\("context_build_started"/);
   assert.match(mainSource, /llmDiagnosticLogger\.log\("context_build_succeeded"/);

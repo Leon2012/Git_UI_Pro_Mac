@@ -309,6 +309,36 @@ function registerIpc(): void {
     });
     return llmService.generateCommitMessage(context, requestId);
   });
+  ipcMain.handle("llm:resolveConflict", async (_event, repositoryPath: RepositoryLocation, filePath: string) => {
+    const requestId = randomUUID();
+    const startedAt = Date.now();
+    llmDiagnosticLogger.log("context_build_started", {
+      requestId,
+      operation: "conflict_resolution",
+      elapsedMs: 0
+    });
+    let context;
+    try {
+      context = await gitService.getConflictResolutionContext(repositoryPath, filePath);
+    } catch (error) {
+      llmDiagnosticLogger.log("context_build_failed", {
+        requestId,
+        operation: "conflict_resolution",
+        errorName: error instanceof Error ? error.name : typeof error,
+        elapsedMs: Date.now() - startedAt
+      });
+      throw error;
+    }
+    llmDiagnosticLogger.log("context_build_succeeded", {
+      requestId,
+      operation: "conflict_resolution",
+      contextBytes: Buffer.byteLength(context.content, "utf8"),
+      contextFiles: 1,
+      contextTruncated: context.truncated,
+      elapsedMs: Date.now() - startedAt
+    });
+    return llmService.resolveConflict(context, requestId);
+  });
 
   ipcMain.handle("projects:add", async (_event, directoryPath: string) => {
     const repositoryRoot = await gitService.getRepositoryRoot(directoryPath);

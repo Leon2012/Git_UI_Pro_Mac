@@ -29,6 +29,7 @@ import type {
   GitLfsMigrateOptions,
   GitLinkedWorktree,
   LlmCommitMessageResult,
+  LlmConflictResolutionResult,
   LlmConnectionTestInput,
   LlmConnectionTestResult,
   LlmSettingsSummary,
@@ -481,7 +482,10 @@ export const apiClient = {
     if (project.status?.hasConflicts) {
       return {
         stagedFiles: [],
-        unstagedFiles: [{ path: "src/config.ts", status: "conflicted", staged: false }]
+        unstagedFiles: [
+          { path: "src/config.ts", status: "conflicted", staged: false },
+          { path: "src/order.ts", status: "conflicted", staged: false }
+        ]
       };
     }
     return {
@@ -1054,6 +1058,22 @@ export const apiClient = {
       scope: project.status?.stagedCount ? "staged" : "working-tree",
       truncated: false,
       fileCount: (project.status?.stagedCount || project.status?.unstagedCount || 1)
+    };
+  },
+
+  async resolveConflictWithLlm(project: GitProject, filePath: string): Promise<LlmConflictResolutionResult> {
+    if (window.gitUI) {
+      return window.gitUI.resolveConflictWithLlm(repositoryTarget(project), filePath);
+    }
+    await wait(mockDelay);
+    if (!browserLlmSettings.baseUrl || !browserLlmSettings.model || !browserLlmSettings.apiKeyConfigured) {
+      throw new Error("请先配置 LLM Base URL、API Key 和 Model。");
+    }
+    return {
+      path: filePath,
+      content: `export const resolved = "${filePath}";\n`,
+      truncated: false,
+      token: "mock-conflict-token"
     };
   },
 

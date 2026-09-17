@@ -29,6 +29,10 @@ interface WorkspaceViewProps {
   onUndoLastCommit: (mode: Exclude<GitResetMode, "hard">) => void;
   onSyncChanges: () => Promise<void>;
   onMergeRemote: () => Promise<void>;
+  onResolveConflictWithLlm: (file: ChangedFile) => void | Promise<void>;
+  onResolveAllConflictsWithLlm: () => void | Promise<void>;
+  llmResolvingPaths: string[];
+  llmResolvingAll: boolean;
   hasCommits: boolean;
   focusRequest: number;
   messageDraftRequest?: CommitMessageDraftRequest;
@@ -68,6 +72,10 @@ export function WorkspaceView({
   onUndoLastCommit,
   onSyncChanges,
   onMergeRemote,
+  onResolveConflictWithLlm,
+  onResolveAllConflictsWithLlm,
+  llmResolvingPaths,
+  llmResolvingAll,
   hasCommits,
   focusRequest,
   messageDraftRequest,
@@ -474,28 +482,44 @@ export function WorkspaceView({
               emptyText="没有冲突文件。"
               actions={[
                 {
+                  title: llmResolvingAll ? "正在用 LLM 解决全部冲突" : "通过 LLM 解决全部冲突",
+                  icon: <Sparkles size={15} />,
+                  onAction: onResolveAllConflictsWithLlm,
+                  disabled: llmResolvingAll || llmResolvingPaths.length > 0
+                },
+                {
                   title: "刷新冲突状态",
                   icon: <RefreshCw size={15} />,
-                  onAction: onRefreshWorktree
+                  onAction: onRefreshWorktree,
+                  disabled: llmResolvingAll || llmResolvingPaths.length > 0
                 }
               ]}
               open={conflictsOpen}
               onToggle={() => setConflictsOpen((value) => !value)}
             >
-              {conflictFiles.map((file) => (
-                <ScmFileRow
-                  file={file}
-                  platform={platform}
-                  selected={file.path === selectedFilePath && selectedFileStaged === false}
-                  key={`conflict-${file.path}`}
-                  primaryActionTitle="打开冲突解决器"
-                  primaryActionIcon={<GitMerge size={15} />}
-                  onPrimaryAction={() => onSelectFile(file)}
-                  onSelect={() => onSelectFile(file)}
-                  onPin={() => onPinFile(file)}
-                  repositoryPath={project?.path}
-                />
-              ))}
+              {conflictFiles.map((file) => {
+                const resolving = llmResolvingPaths.includes(file.path);
+                return (
+                  <ScmFileRow
+                    file={file}
+                    platform={platform}
+                    selected={file.path === selectedFilePath && selectedFileStaged === false}
+                    key={`conflict-${file.path}`}
+                    primaryActionTitle="打开冲突解决器"
+                    primaryActionIcon={<GitMerge size={15} />}
+                    onPrimaryAction={() => onSelectFile(file)}
+                    onSelect={() => onSelectFile(file)}
+                    onPin={() => onPinFile(file)}
+                    repositoryPath={project?.path}
+                    busy={resolving}
+                    llmAction={{
+                      title: resolving ? "正在通过 LLM 解决冲突" : "通过 LLM 解决冲突",
+                      onAction: () => onResolveConflictWithLlm(file),
+                      disabled: llmResolvingAll || llmResolvingPaths.length > 0
+                    }}
+                  />
+                );
+              })}
             </ScmSection>
           ) : null}
 
@@ -570,7 +594,7 @@ function ScmSection({
   title: string;
   count: number;
   emptyText: string;
-  actions: Array<{ title: string; icon: React.ReactNode; onAction: () => void; danger?: boolean; disabled?: boolean }>;
+  actions: Array<{ title: string; icon: React.ReactNode; onAction: () => void | Promise<void>; danger?: boolean; disabled?: boolean }>;
   open: boolean;
   onToggle: () => void;
   children: React.ReactNode;
@@ -619,7 +643,9 @@ function ScmFileRow({
   onIgnore,
   onSelect,
   onPin,
-  repositoryPath
+  repositoryPath,
+  llmAction,
+  busy
 }: {
   file: ChangedFile;
   platform: DesktopPlatform;
@@ -632,6 +658,8 @@ function ScmFileRow({
   onSelect: () => void;
   onPin: () => void;
   repositoryPath?: string;
+  llmAction?: { title: string; onAction: () => void | Promise<void>; disabled?: boolean };
+  busy?: boolean;
 }) {
   const clickTimerRef = useRef<number | undefined>();
   const fullPath = absoluteFilePath(repositoryPath, file.path);
@@ -658,7 +686,7 @@ function ScmFileRow({
 
   return (
     <div
-      className={`scm-file-row ${selected ? "active" : ""}`}
+      className={`scm-file-row ${selected ? "active" : ""} ${busy ? "busy" : ""}`}
       role="button"
       tabIndex={0}
       onClick={scheduleSelect}
@@ -699,6 +727,22 @@ function ScmFileRow({
               {primaryActionIcon}
             </button>
           </PathTooltip>
+          {llmAction ? (
+            <PathTooltip content={llmAction.title} className="scm-row-action-tooltip">
+              <button
+                type="button"
+                className="icon-button compact-icon llm-icon"
+                aria-label={llmAction.title}
+                disabled={llmAction.disabled || busy}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void llmAction.onAction();
+                }}
+              >
+                <Sparkles size={15} />
+              </button>
+            </PathTooltip>
+          ) : null}
           {onIgnore ? (
             <PathTooltip content="添加到 .gitignore" className="scm-row-action-tooltip">
               <button

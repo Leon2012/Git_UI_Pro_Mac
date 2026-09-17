@@ -46,6 +46,8 @@ import type {
   GitRemoteInfo,
   GitResetMode,
   GitStatusSummary,
+  LlmConflictResolutionResult,
+  LlmConflictSuggestion,
   ProjectLibraryState,
   RemoteProjectInput,
   RemoteProjectTestResult,
@@ -177,6 +179,8 @@ export function App() {
   const [worktree, setWorktree] = useState<WorktreeState>(emptyWorktree);
   const [worktreeTabs, setWorktreeTabs] = useState<WorktreeEditorTab[]>([]);
   const [activeWorktreeTabId, setActiveWorktreeTabId] = useState<string | null>(null);
+  const [llmConflictResolvingPaths, setLlmConflictResolvingPaths] = useState<string[]>([]);
+  const [llmConflictResolvingAll, setLlmConflictResolvingAll] = useState(false);
   const [gitDependency, setGitDependency] = useState<GitDependencyState>({ status: "checking" });
   const [statusMessage, setStatusMessage] = useState("准备就绪");
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => readThemeMode());
@@ -214,6 +218,7 @@ export function App() {
   const [uiPreferences, setUiPreferences] = useState<UiPreferences>(() => defaultUiPreferences());
   const projectsRef = useRef<GitProject[]>([]);
   const selectedProjectIdRef = useRef<string | null>(null);
+  const llmConflictSuggestionsRef = useRef(new Map<string, LlmConflictSuggestion>());
   const autoRefreshBusyRef = useRef(false);
   const projectListRefreshBusyRef = useRef(false);
   const remoteProjectListRefreshBusyRef = useRef(false);
@@ -1470,9 +1475,21 @@ export function App() {
     try {
       if (file.status === "conflicted") {
         const conflict = await apiClient.getConflictFileDetails(selectedProject, file.path);
+        const suggestion = takeLlmConflictSuggestion(selectedProject.id, conflict.path, conflict.token);
         setWorktreeTabs((current) =>
           current.map((tab) =>
-            tab.id === tabId ? { ...tab, file, diffLines: [], preview: null, conflict, loading: false, pinned: tab.pinned || pinned } : tab
+            tab.id === tabId
+              ? {
+                  ...tab,
+                  file,
+                  diffLines: [],
+                  preview: null,
+                  conflict,
+                  llmSuggestion: suggestion,
+                  loading: false,
+                  pinned: tab.pinned || pinned
+                }
+              : tab
           )
           );
           rememberStatus(`正在解决冲突：${file.path}`);
@@ -1579,6 +1596,172 @@ export function App() {
     } catch (error) {
       notifyError(errorText(error, "刷新工作区失败。"), undefined, toastId);
     }
+  }
+
+  async function handleResolveConflictWithLlm(file: ChangedFile): Promise<void> {
+    if (!selectedProject || file.status !== "conflicted") {
+      return;
+    }
+
+    const project = selectedProject;
+    if (!(await ensureLlmConfigured())) {
+      return;
+    }
+
+    const toastId = notifyLoading(`正在让 LLM 解决冲突：${file.path}...`);
+    setLlmConflictResolvingPaths((current) => (current.includes(file.path) ? current : [...current, file.path]));
+    markLlmConflictSuggestionBusy(file.path, true);
+    try {
+      const result = await apiClient.resolveConflictWithLlm(project, file.path);
+      rememberLlmConflictSuggestion(project.id, result);
+      await openLlmConflictSuggestion(project, result.path, toastId);
+    } catch (error) {
+      notifyError(errorText(error, "LLM 解决冲突失败。"), undefined, toastId);
+    } finally {
+      setLlmConflictResolvingPaths((current) => current.filter((path) => path !== file.path));
+      markLlmConflictSuggestionBusy(file.path, false);
+    }
+  }
+
+  async function handleResolveAllConflictsWithLlm(): Promise<void> {
+    if (!selectedProject) {
+      return;
+    }
+
+    const project = selectedProject;
+    const conflictFiles = worktree.unstagedFiles.filter((file) => file.status === "conflicted");
+    if (conflictFiles.length === 0) {
+      notifyInfo("没有需要解决的冲突文件");
+      return;
+    }
+
+    if (!(await ensureLlmConfigured())) {
+      return;
+    }
+
+    const confirmed = await requestConfirm({
+      title: "通过 LLM 解决全部冲突？",
+      description: `将依次为 ${conflictFiles.length} 个冲突文件生成合并建议，逐个打开供你确认后保存；不会自动写入文件或暂存。`,
+      detail: conflictFiles.map((file) => file.path).join("\n"),
+      confirmLabel: "开始生成",
+      tone: "warning"
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    const toastId = notifyLoading(`正在让 LLM 解决 ${conflictFiles.length} 个冲突文件...`);
+    setLlmConflictResolvingAll(true);
+    setLlmConflictResolvingPaths(conflictFiles.map((file) => file.path));
+    for (const file of conflictFiles) {
+      markLlmConflictSuggestionBusy(file.path, true);
+    }
+
+    const failures: string[] = [];
+    let succeeded = 0;
+    let lastSuggestedPath: string | undefined;
+    try {
+      for (const file of conflictFiles) {
+        try {
+          const result = await apiClient.resolveConflictWithLlm(project, file.path);
+          rememberLlmConflictSuggestion(project.id, result);
+          succeeded += 1;
+          lastSuggestedPath = result.path;
+        } catch (error) {
+          failures.push(`${file.path}：${errorText(error, "生成失败。")}`);
+        } finally {
+          setLlmConflictResolvingPaths((current) => current.filter((path) => path !== file.path));
+          markLlmConflictSuggestionBusy(file.path, false);
+        }
+      }
+
+      if (succeeded === 0) {
+        notifyError("LLM 未能解决任何冲突文件", failures.join("\n"), toastId);
+        return;
+      }
+
+      if (lastSuggestedPath) {
+        await openLlmConflictSuggestion(project, lastSuggestedPath, toastId, failures, succeeded);
+        return;
+      }
+
+      notifySuccess(`已生成 ${succeeded} 个合并建议`, "逐个打开冲突文件即可确认结果。", toastId);
+    } finally {
+      setLlmConflictResolvingAll(false);
+    }
+  }
+
+  async function ensureLlmConfigured(): Promise<boolean> {
+    try {
+      const settings = await apiClient.getLlmSettings();
+      if (!settings.baseUrl || !settings.model || !settings.apiKeyConfigured) {
+        notifyInfo("请先完成 LLM 设置", "需要配置 Base URL、API Key 和 Model。");
+        openLlmPreferences();
+        return false;
+      }
+      return true;
+    } catch (error) {
+      notifyError(errorText(error, "无法读取 LLM 设置。"));
+      return false;
+    }
+  }
+
+  function rememberLlmConflictSuggestion(projectId: string, result: LlmConflictResolutionResult) {
+    llmConflictSuggestionsRef.current.set(llmConflictSuggestionKey(projectId, result.path), {
+      path: result.path,
+      content: result.content,
+      truncated: result.truncated,
+      token: result.token
+    });
+  }
+
+  function takeLlmConflictSuggestion(projectId: string, filePath: string, token: string): LlmConflictSuggestion | undefined {
+    const key = llmConflictSuggestionKey(projectId, filePath);
+    const suggestion = llmConflictSuggestionsRef.current.get(key);
+    if (!suggestion) {
+      return undefined;
+    }
+    if (suggestion.token && token && suggestion.token !== token) {
+      llmConflictSuggestionsRef.current.delete(key);
+      return undefined;
+    }
+    return suggestion;
+  }
+
+  function markLlmConflictSuggestionBusy(filePath: string, busy: boolean) {
+    const tabId = worktreeTabId({ path: filePath, status: "conflicted", staged: false });
+    setWorktreeTabs((current) =>
+      current.map((tab) => {
+        if (tab.id !== tabId) {
+          return tab;
+        }
+        if (tab.llmSuggestionBusy === busy) {
+          return tab;
+        }
+        return { ...tab, llmSuggestionBusy: busy };
+      })
+    );
+  }
+
+  async function openLlmConflictSuggestion(
+    project: GitProject,
+    filePath: string,
+    toastId: ToastId,
+    failures: string[] = [],
+    succeeded = 1
+  ): Promise<boolean> {
+    const file: ChangedFile = { path: filePath, status: "conflicted", staged: false };
+    const opened = await openWorktreeFile(file, true, true);
+    if (!opened) {
+      notifySuccess("LLM 已生成合并建议", "打开该冲突文件即可查看并确认结果。", toastId);
+      return false;
+    }
+
+    const description = failures.length > 0
+      ? `已生成 ${succeeded} 个建议，${failures.length} 个失败：\n${failures.join("\n")}`
+      : "请检查合并结果后点击「保存并标记已解决」，不会自动写入。";
+    notifySuccess("LLM 已生成合并建议", description, toastId);
+    return true;
   }
 
   async function handleResolveConflict(tab: WorktreeEditorTab, input: ConflictResolutionInput): Promise<boolean> {
@@ -3391,6 +3574,10 @@ export function App() {
                 onUndoLastCommit={(mode) => void handleUndoLastCommit(mode)}
                 onSyncChanges={() => (selectedProject ? runSyncOperation(selectedProject) : Promise.resolve())}
                 onMergeRemote={() => (selectedProject ? runMergeRemoteOperation(selectedProject) : Promise.resolve())}
+                onResolveConflictWithLlm={handleResolveConflictWithLlm}
+                onResolveAllConflictsWithLlm={handleResolveAllConflictsWithLlm}
+                llmResolvingPaths={llmConflictResolvingPaths}
+                llmResolvingAll={llmConflictResolvingAll}
                 hasCommits={Boolean(findCurrentHeadCommit(commits))}
                 focusRequest={commitFocusRequest}
                 messageDraftRequest={commitMessageDraftRequest}
@@ -4059,6 +4246,10 @@ function hasWorktreeChanges(project: GitProject): boolean {
 
 function worktreeTabId(file: ChangedFile): string {
   return `${file.staged ? "staged" : "unstaged"}:${file.path}`;
+}
+
+function llmConflictSuggestionKey(projectId: string, filePath: string): string {
+  return `${projectId}:${filePath}`;
 }
 
 function gitIgnoreRuleForPath(filePath: string): string {

@@ -5,7 +5,7 @@ import { access, lstat, mkdir, open, readFile, readlink, readdir, rename, rmdir,
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import type { RemoteProjectInput, SshConnection } from "./configStore";
-import { buildCommitMessageContext, type CommitMessageContext, type CommitMessageContextFile } from "./llmService";
+import { buildCommitMessageContext, buildConflictResolutionContext, type CommitMessageContext, type CommitMessageContextFile, type ConflictResolutionContext } from "./llmService";
 
 export interface RepositoryTarget {
   path: string;
@@ -1251,10 +1251,7 @@ export class GitService {
 
   async getConflictFileDetails(repositoryPath: RepositoryLocation, filePath: string): Promise<ConflictFileDetails> {
     const snapshot = await this.loadConflictSnapshot(repositoryPath, filePath);
-    const [status, incomingLabel] = await Promise.all([
-      this.getStatus(repositoryPath),
-      this.getMergeHeadLabel(repositoryPath)
-    ]);
+    const { currentLabel, incomingLabel } = await this.loadConflictLabels(repositoryPath);
     const buffers = [snapshot.base, snapshot.current, snapshot.incoming, snapshot.result].filter((value): value is Buffer => Boolean(value));
     const isBinary = buffers.some(isBinaryBuffer);
     const editable = !isBinary && buffers.every((buffer) => buffer.byteLength <= maxEditableConflictBytes);
@@ -1269,12 +1266,35 @@ export class GitService {
       currentExists: Boolean(snapshot.current),
       incomingExists: Boolean(snapshot.incoming),
       resultExists: Boolean(snapshot.result),
-      currentLabel: status.mergeTargetBranch ?? status.currentBranch ?? "当前分支",
-      incomingLabel: status.mergeSourceBranch ?? incomingLabel ?? "传入分支",
+      currentLabel,
+      incomingLabel,
       editable,
       isBinary,
       token: snapshot.token
     };
+  }
+
+  async getConflictResolutionContext(repositoryPath: RepositoryLocation, filePath: string): Promise<ConflictResolutionContext> {
+    const snapshot = await this.loadConflictSnapshot(repositoryPath, filePath);
+    if (!isEditableConflictSnapshot(snapshot)) {
+      throw new Error("该冲突文件是二进制文件或体积过大，无法交给 LLM 解决。");
+    }
+
+    const labels = await this.loadConflictLabels(repositoryPath);
+    const context = buildConflictResolutionContext({
+      path: snapshot.path,
+      currentLabel: labels.currentLabel,
+      incomingLabel: labels.incomingLabel,
+      baseContent: snapshot.base ? decodeGitOutput(snapshot.base) : null,
+      currentContent: snapshot.current ? decodeGitOutput(snapshot.current) : null,
+      incomingContent: snapshot.incoming ? decodeGitOutput(snapshot.incoming) : null,
+      resultContent: snapshot.result ? decodeGitOutput(snapshot.result) : null,
+      token: snapshot.token
+    });
+    if (context.truncated) {
+      throw new Error("冲突内容超过 64 KB，为避免 LLM 只返回部分文件，请手动解决该文件。");
+    }
+    return context;
   }
 
   async resolveConflictFile(repositoryPath: RepositoryLocation, filePath: string, input: ConflictResolutionInput): Promise<GitOperationResult> {
@@ -3142,6 +3162,17 @@ export class GitService {
     return {
       ...combineGitResults(results, false),
       messageZh: "撤销根提交失败，仓库分支未移动，工作区文件已保留。"
+    };
+  }
+
+  private async loadConflictLabels(repositoryPath: RepositoryLocation): Promise<{ currentLabel: string; incomingLabel: string }> {
+    const [status, incomingLabel] = await Promise.all([
+      this.getStatus(repositoryPath),
+      this.getMergeHeadLabel(repositoryPath)
+    ]);
+    return {
+      currentLabel: status.mergeTargetBranch ?? status.currentBranch ?? "当前分支",
+      incomingLabel: status.mergeSourceBranch ?? incomingLabel ?? "传入分支"
     };
   }
 

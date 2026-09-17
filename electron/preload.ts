@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld("gitUI", {
   clearLlmApiKey: () => ipcRenderer.invoke("llm:clearApiKey"),
   testLlmConnection: (input: LlmConnectionTestInput) => ipcRenderer.invoke("llm:testConnection", input),
   generateCommitMessage: (repositoryPath: RepositoryTarget) => ipcRenderer.invoke("llm:generateCommitMessage", repositoryPath),
+  resolveConflictWithLlm: (repositoryPath: RepositoryTarget, filePath: string) =>
+    ipcRenderer.invoke("llm:resolveConflict", repositoryPath, filePath),
   addProject: (directoryPath: string) => ipcRenderer.invoke("projects:add", directoryPath),
   initializeRepository: (directoryPath: string, initialBranch: string, createGitignore: boolean) =>
     ipcRenderer.invoke("projects:initializeRepository", directoryPath, initialBranch, createGitignore),
