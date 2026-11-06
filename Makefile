@@ -8,7 +8,7 @@ PLAYWRIGHT ?= npx playwright
 
 .PHONY: help install install-deps dev dev-web build typecheck test test-ui test-macos \
   test-macos-interface verify-macos verify-macos-artifacts smoke-macos-interface \
-  dist-mac macos-arm64 package-macos-arm64
+  dist-mac fix-macos-identity macos-arm64 package-macos-arm64
 
 help:
 	@printf '%s\n' \
@@ -27,6 +27,7 @@ help:
 		'macOS arm64:' \
 		'  verify-macos           Verify the current host and Electron runtime' \
 		'  dist-mac               Build arm64 DMG and ZIP into release/' \
+		'  fix-macos-identity     Patch a unique LC_UUID and re-sign an installed app (APP_PATH=...)' \
 		'  macos-arm64           Build, verify and smoke-test an isolated arm64 package' \
 		'  package-macos-arm64   Alias for macos-arm64' \
 		'  verify-macos-artifacts Verify an existing output (ARTIFACT_DIR=...)' \
@@ -57,6 +58,9 @@ install:
 	test -d "$$app_path"; \
 	codesign --verify --deep --strict --verbose=2 "$$app_path"; \
 	ditto "$$app_path" "$$staging_dir/Git UI Pro.app"; \
+	printf '%s\n' '[macos-install] patching a unique LC_UUID before installation'; \
+	$(NODE) scripts/patch-macos-binary-uuid.mjs "$$staging_dir/Git UI Pro.app" --identity "$$identity" --entitlements "$(CURDIR)/build/entitlements.mac.plist"; \
+	codesign --verify --strict --verbose=2 "$$staging_dir/Git UI Pro.app"; \
 	if pgrep -x 'Git UI Pro' >/dev/null 2>&1; then \
 		printf '%s\n' '[macos-install] stopping the running app before replacement'; \
 		osascript -e 'tell application id "com.gitui.pro" to quit' || true; \
@@ -117,6 +121,30 @@ smoke-macos-interface:
 
 dist-mac:
 	$(NPM) run dist:mac -- --publish never
+
+fix-macos-identity:
+	@set -euo pipefail; \
+	app_path="$${APP_PATH:-/Applications/Git UI Pro.app}"; \
+	identity="$${MAC_SIGN_IDENTITY:-$$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p' | head -n 1)}"; \
+	if [ -z "$$identity" ]; then \
+		printf '%s\n' '[macos-identity] no valid codesigning identity found; set MAC_SIGN_IDENTITY'; \
+		exit 2; \
+	fi; \
+	printf '%s\n' "[macos-identity] app=$$app_path" "[macos-identity] identity=$$identity"; \
+	if pgrep -x 'Git UI Pro' >/dev/null 2>&1; then \
+		printf '%s\n' '[macos-identity] stopping the running app before patching'; \
+		osascript -e 'tell application id "com.gitui.pro" to quit' || true; \
+		for attempt in $$(seq 1 30); do \
+			if ! pgrep -x 'Git UI Pro' >/dev/null 2>&1; then break; fi; \
+			sleep 1; \
+		done; \
+		if pgrep -x 'Git UI Pro' >/dev/null 2>&1; then \
+			printf '%s\n' '[macos-identity] running app did not exit; refusing to patch it'; \
+			exit 1; \
+		fi; \
+	fi; \
+	$(NODE) scripts/patch-macos-binary-uuid.mjs "$$app_path" --identity "$$identity" --entitlements "$(CURDIR)/build/entitlements.mac.plist"; \
+	printf '%s\n' "[macos-identity] completed app=$$app_path"
 
 macos-arm64:
 	@set -euo pipefail; \
