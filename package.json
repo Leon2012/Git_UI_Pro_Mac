@@ -196,6 +196,9 @@
       ],
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "Git UI Pro 需要访问本地网络，用于连接局域网内的 LLM 服务与自建代码托管服务。"
+      },
       "identity": null,
       "artifactName": "Git-UI-Pro-${version}-${os}-${arch}.${ext}"
     },

@@ -10,8 +10,8 @@ import {
   type UIEvent as ReactUIEvent,
   type WheelEvent as ReactWheelEvent
 } from "react";
-import { AlertTriangle, BookOpen, Check, Code2, Copy, ExternalLink, FileText, FolderOpen, GitMerge, Maximize2, RefreshCw, RotateCcw, Save, Sparkles, Table2, X, ZoomIn, ZoomOut } from "lucide-react";
-import { BinaryDocumentPreview, TextDocumentPreview, textReaderKind } from "./DocumentPreview";
+import { AlertTriangle, BookOpen, Check, Code2, Copy, ExternalLink, FileDiff, FileText, FolderOpen, GitMerge, Maximize2, RefreshCw, RotateCcw, Save, Sparkles, Table2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { BinaryDocumentPreview, PlainTextDocumentPreview, TextDocumentPreview, textReaderKind } from "./DocumentPreview";
 import { DiffMinimap, type DiffMinimapLine } from "./DiffMinimap";
 import { PathTooltip } from "./PathTooltip";
 import type { ChangedFile, ConflictFileDetails, ConflictResolutionInput, DiffLine, FilePreview, LlmConflictSuggestion } from "../types/domain";
@@ -53,6 +53,8 @@ interface WorktreeDetailPanelProps {
 }
 
 type SplitDiffRowType = "context" | "add" | "delete" | "replace";
+
+type EditorTabView = "content" | "diff";
 
 interface SplitDiffRow {
   left?: DiffLine;
@@ -100,9 +102,13 @@ export function WorktreeDetailPanel({
   const mediaPreview = isMediaFilePreview(filePreview) ? filePreview : undefined;
   const binaryDocumentPreview = filePreview && !mediaPreview ? filePreview : undefined;
   const activeTextReaderKind = activeTab && !filePreview ? textReaderKind(activeTab.file.path) : undefined;
-  const [sourceViewTabIds, setSourceViewTabIds] = useState<Set<string>>(() => new Set());
-  const showTextReader = Boolean(!filePreview && activeTab && activeTextReaderKind && !sourceViewTabIds.has(activeTab.id));
-  const showDiffMinimap = !filePreview && !showTextReader && activeDiffLines.some((line) => line.type !== "context");
+  const [tabViewOverrides, setTabViewOverrides] = useState<Map<string, EditorTabView>>(() => new Map());
+  const activeTabView = activeTab ? tabViewOverrides.get(activeTab.id) : undefined;
+  const wantsDiffView = activeTabView === "diff";
+  const showTextReader = Boolean(!filePreview && activeTab && activeTextReaderKind && !wantsDiffView);
+  const showPlainTextContent = Boolean(!filePreview && activeTab && !activeTextReaderKind && activeTabView === "content");
+  const showFileDiff = Boolean(!filePreview && activeTab && !showTextReader && !showPlainTextContent);
+  const showDiffMinimap = showFileDiff && activeDiffLines.some((line) => line.type !== "context");
   const splitDiffRows = useMemo(() => buildSplitDiffRows(activeDiffLines), [activeDiffLines]);
   const [splitMaxScroll, setSplitMaxScroll] = useState(0);
   const [splitScrollX, setSplitScrollX] = useState(0);
@@ -113,8 +119,8 @@ export function WorktreeDetailPanel({
   const splitDiffEnabled = diffViewMode ? diffViewMode === "split" : prefersSplitDiff;
   const splitDiffAvailableWidth = Math.max(0, diffPanelWidth - (showDiffMinimap ? DIFF_MINIMAP_WIDTH : 0));
   const splitDiffHasRoom = diffPanelWidth === 0 || splitDiffAvailableWidth >= MIN_SPLIT_DIFF_WIDTH;
-  const showSplitDiff = Boolean(!filePreview && !showTextReader && splitDiffEnabled && splitDiffHasRoom && activeTab && canUseSplitDiff(activeTab.file.status) && splitDiffRows.length > 0);
-  const virtualRowCount = filePreview || showTextReader ? 0 : showSplitDiff ? splitDiffRows.length : activeDiffLines.length;
+  const showSplitDiff = Boolean(showFileDiff && splitDiffEnabled && splitDiffHasRoom && activeTab && canUseSplitDiff(activeTab.file.status) && splitDiffRows.length > 0);
+  const virtualRowCount = showFileDiff ? (showSplitDiff ? splitDiffRows.length : activeDiffLines.length) : 0;
   const firstDiffIndex = useMemo(
     () => showSplitDiff ? splitDiffRows.findIndex((row) => row.type !== "context") : activeDiffLines.findIndex((line) => line.type !== "context"),
     [activeDiffLines, showSplitDiff, splitDiffRows]
@@ -323,19 +329,35 @@ export function WorktreeDetailPanel({
     window.requestAnimationFrame(() => editorTabRefs.current.get(nextTab.id)?.focus());
   }
 
-  function setActiveTextView(sourceView: boolean) {
+  useEffect(() => {
+    setTabViewOverrides((current) => {
+      if (current.size === 0) {
+        return current;
+      }
+      const aliveTabIds = new Set(tabs.map((tab) => tab.id));
+      const next = new Map<string, EditorTabView>();
+      for (const [tabId, view] of current) {
+        if (aliveTabIds.has(tabId)) {
+          next.set(tabId, view);
+        }
+      }
+      return next.size === current.size ? current : next;
+    });
+  }, [tabs]);
+
+  function setActiveTabView(view: EditorTabView) {
     if (!activeTab) {
       return;
     }
-    setSourceViewTabIds((current) => {
-      const next = new Set(current);
-      if (sourceView) {
-        next.add(activeTab.id);
-      } else {
-        next.delete(activeTab.id);
-      }
+    setTabViewOverrides((current) => {
+      const next = new Map(current);
+      next.set(activeTab.id, view);
       return next;
     });
+  }
+
+  function setActiveTextView(sourceView: boolean) {
+    setActiveTabView(sourceView ? "diff" : "content");
   }
 
   if (!activeTab) {
@@ -429,6 +451,20 @@ export function WorktreeDetailPanel({
               <Copy size={15} />
             </button>
           </PathTooltip>
+          {!filePreview && !activeTab.conflict ? (
+            <PathTooltip content={showFileDiff ? "关闭差异对比，显示文件内容" : "打开差异对比"} className="editor-action-tooltip">
+              <button
+                type="button"
+                className={`icon-button compact-icon editor-diff-toggle ${showFileDiff ? "active" : ""}`}
+                aria-label={showFileDiff ? "关闭差异对比" : "打开差异对比"}
+                aria-pressed={showFileDiff}
+                disabled={Boolean(activeTab.loading || activeTab.loadError)}
+                onClick={() => setActiveTabView(showFileDiff ? "content" : "diff")}
+              >
+                <FileDiff size={15} />
+              </button>
+            </PathTooltip>
+          ) : null}
           {desktopFileActionsEnabled && onOpenFile ? (
             <PathTooltip content="用系统默认应用打开" className="editor-action-tooltip">
               <button type="button" className="icon-button compact-icon" aria-label="用系统默认应用打开" onClick={() => onOpenFile(activeTab)}>
@@ -490,7 +526,7 @@ export function WorktreeDetailPanel({
         ) : (
         <section
           id={diffScrollContainerId}
-          className={`diff-panel editor-diff-panel ${showSplitDiff ? "split-mode" : ""} ${diffWrap ? "wrap-lines" : ""} ${filePreview ? "preview-mode" : ""} ${mediaPreview ? "media-mode" : ""} ${binaryDocumentPreview || showTextReader ? "document-mode" : ""} ${showDiffMinimap ? "has-minimap" : ""}`}
+          className={`diff-panel editor-diff-panel ${showSplitDiff ? "split-mode" : ""} ${diffWrap ? "wrap-lines" : ""} ${filePreview ? "preview-mode" : ""} ${mediaPreview ? "media-mode" : ""} ${binaryDocumentPreview || showTextReader ? "document-mode" : ""} ${showPlainTextContent ? "plain-text-mode" : ""} ${showDiffMinimap ? "has-minimap" : ""}`}
           ref={diffPanelRef}
           onScroll={handleDiffPanelScroll}
         >
@@ -500,6 +536,8 @@ export function WorktreeDetailPanel({
             <BinaryDocumentPreview preview={binaryDocumentPreview} filePath={file.path} />
           ) : showTextReader ? (
             <TextDocumentPreview filePath={file.path} status={file.status} diffLines={diffLines} />
+          ) : showPlainTextContent ? (
+            <PlainTextDocumentPreview filePath={file.path} status={file.status} diffLines={diffLines} />
           ) : showSplitDiff ? (
             <div className="split-diff-grid" role="table" aria-label="左右文件对比" ref={splitDiffRef}>
               <div className="split-diff-header" role="row">

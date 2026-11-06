@@ -3067,6 +3067,44 @@ button {
   background: color-mix(in srgb, var(--sunken) 90%, var(--panel));
 }
 
+.editor-diff-panel.plain-text-mode {
+  padding-bottom: 14px;
+}
+
+.editor-plain-text {
+  display: grid;
+  align-content: start;
+  min-height: 100%;
+  min-width: 720px;
+  font-family: var(--mono-font);
+  font-size: 12px;
+}
+
+.editor-plain-text-line {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  min-height: 26px;
+}
+
+.editor-plain-text-line code {
+  overflow: hidden;
+  padding: 5px 10px;
+  color: var(--diff-text);
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.editor-diff-panel.wrap-lines .editor-plain-text-line code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.editor-plain-text-truncated {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .editor-diff-panel.has-minimap {
   padding-left: 58px;
   scrollbar-gutter: auto;
@@ -9513,13 +9551,13 @@ code,
   grid-auto-flow: column;
   grid-auto-columns: 36px;
   align-items: center;
-  width: 36px;
-  min-width: 36px;
+  width: 72px;
+  min-width: 72px;
 }
 
 .editor-file-actions.desktop-actions-enabled {
-  width: 108px;
-  min-width: 108px;
+  width: 144px;
+  min-width: 144px;
 }
 
 .editor-file-actions .editor-action-tooltip,
@@ -9528,6 +9566,11 @@ code,
   min-width: 36px;
   height: 36px;
   min-height: 36px;
+}
+
+.editor-file-actions .icon-button.compact-icon.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .editor-tab-main {

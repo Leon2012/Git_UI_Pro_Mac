@@ -1853,6 +1853,38 @@ test("Markdown 默认使用阅读视图并可切回源码差异", async ({ page 
   await expect(page.locator(".markdown-document h1")).toHaveText("Markdown 阅读标题");
 });
 
+test("代码文件可以用按钮在差异对比和文件内容之间手动切换", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".graph-commit-row").first().click();
+  await page.evaluate(() => {
+    window.gitUI = {
+      getCommitFilePreview: async () => null,
+      getCommitDiff: async () => [
+        { type: "context", oldLineNumber: 1, newLineNumber: 1, content: "{" },
+        { type: "add", newLineNumber: 2, content: "  \"name\": \"git-ui-pro\"," },
+        { type: "delete", oldLineNumber: 2, content: "  \"name\": \"old-name\"," },
+        { type: "context", oldLineNumber: 3, newLineNumber: 3, content: "}" }
+      ]
+    } as unknown as typeof window.gitUI;
+  });
+
+  await page.locator(".graph-commit-file-row").filter({ hasText: "package.json" }).click();
+  const diffToggle = page.getByRole("button", { name: "关闭差异对比", exact: true });
+  await expect(diffToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".editor-diff-panel .diff-line")).toHaveCount(4);
+
+  await diffToggle.click();
+  const contentToggle = page.getByRole("button", { name: "打开差异对比", exact: true });
+  await expect(contentToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator(".editor-diff-panel .diff-line")).toHaveCount(0);
+  await expect(page.locator(".editor-plain-text-line")).toHaveCount(3);
+  await expect(page.locator(".editor-plain-text-line code").nth(1)).toHaveText("  \"name\": \"git-ui-pro\",");
+
+  await contentToggle.click();
+  await expect(page.getByRole("button", { name: "关闭差异对比", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".editor-diff-panel .diff-line")).toHaveCount(4);
+});
+
 test("Word 和表格二进制文件在右侧使用专用阅读器", async ({ page }) => {
   const wordDataUrl = await createWordPreviewDataUrl();
   const workbook = XLSX.utils.book_new();

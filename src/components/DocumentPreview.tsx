@@ -43,6 +43,7 @@ interface SpreadsheetWorkbook {
 }
 
 const SPREADSHEET_MAX_ROWS = 200;
+const PLAIN_TEXT_MAX_LINES = 2000;
 const SPREADSHEET_MAX_COLUMNS = 50;
 const MARKDOWN_CACHE_LIMIT = 8;
 const pdfBlobCache = new WeakMap<FilePreview, Promise<Blob>>();
@@ -73,6 +74,26 @@ export function TextDocumentPreview({ filePath, status, diffLines }: TextDocumen
     return <MarkdownPreview content={content} filePath={filePath} />;
   }
   return <SpreadsheetPreview textContent={content} filePath={filePath} />;
+}
+
+export function PlainTextDocumentPreview({ filePath, status, diffLines }: TextDocumentPreviewProps) {
+  const content = reconstructDisplayedText(diffLines, status);
+  const lines = content.length > 0 ? content.split("\n") : [];
+  const visibleLines = lines.slice(0, PLAIN_TEXT_MAX_LINES);
+  return (
+    <div className="editor-plain-text" role="document" aria-label={`${filePath} 的文件内容`}>
+      {visibleLines.length === 0 ? <div className="empty-inline">没有可显示的文件内容。</div> : null}
+      {visibleLines.map((line, index) => (
+        <div className="editor-plain-text-line" key={index}>
+          <span className="line-number">{index + 1}</span>
+          <code>{line || " "}</code>
+        </div>
+      ))}
+      {lines.length > visibleLines.length ? (
+        <div className="editor-plain-text-truncated">内容过长，仅显示前 {PLAIN_TEXT_MAX_LINES} 行。</div>
+      ) : null}
+    </div>
+  );
 }
 
 export function textReaderKind(filePath: string): "markdown" | "spreadsheet" | undefined {
