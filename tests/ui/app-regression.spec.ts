@@ -1700,14 +1700,28 @@ test("窄屏文件对比在项目栏和分支栏收起后返回左右布局", as
   await expect(diffPanel).toBeVisible();
   await expect(diffPanel).not.toHaveClass(/split-mode/);
   await expect(diffPanel.locator(".diff-lines")).toBeVisible();
-  expect(await diffPanel.evaluate((panel) => panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight))).toBeLessThan(960);
+  // 与 WorktreeDetailPanel 的 MIN_SPLIT_DIFF_WIDTH 保持一致
+  expect(await diffPanel.evaluate((panel) => panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight))).toBeLessThan(720);
 
   await page.getByRole("button", { name: "收起项目栏" }).click();
-  await expect(diffPanel).not.toHaveClass(/split-mode/);
   await page.getByRole("button", { name: "收起分支栏" }).click();
   await expect(diffPanel).toHaveClass(/split-mode/);
   await expect(diffPanel.locator(".split-diff-grid")).toBeVisible();
-  expect(await diffPanel.evaluate((panel) => panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight))).toBeGreaterThanOrEqual(960);
+  expect(await diffPanel.evaluate((panel) => panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight))).toBeGreaterThanOrEqual(720);
+});
+
+test("宽屏下分支栏展开时仍保持左右文件对比", async ({ page }) => {
+  await page.setViewportSize({ width: 1832, height: 900 });
+  await page.goto("/");
+  const modifiedFile = page.locator(".scm-file-row").filter({ hasText: "App.tsx" }).first();
+  await expect(modifiedFile).toBeVisible();
+  await openExpandedBranchRail(page);
+  await modifiedFile.click();
+
+  const diffPanel = page.locator(".editor-diff-panel");
+  await expect(diffPanel).toHaveClass(/split-mode/);
+  await expect(diffPanel.locator(".split-diff-grid")).toBeVisible();
+  await expect(diffPanel.locator(".split-diff-header span").first()).toHaveText("原文件");
 });
 
 test("长文件对比使用整文件宽度并保持虚拟滚动高度稳定", async ({ page }) => {
